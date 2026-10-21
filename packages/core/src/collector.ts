@@ -16,6 +16,11 @@ export interface CollectOptions {
   /** Override the stored cursor (e.g. `--since 2026-10-20`). */
   since?: string;
   now?: Date;
+  /**
+   * Duplicate-search history only: store title/body/state without PR or author enrichment, never move the
+   * cursor and never assign a night, so backfilled items do not enter the triage queue.
+   */
+  corpusOnly?: boolean;
 }
 
 export interface CollectError {
@@ -62,6 +67,22 @@ export async function collectRepo(gh: GitHub, db: pg.Pool, opts: CollectOptions)
 
   const errors: CollectError[] = [];
   const items: Item[] = [];
+  if (opts.corpusOnly) {
+    for (const issue of scan.changed) items.push(mapIssue(opts.repo, issue, null, { accountAgeDays: null, priorMerged: null }));
+    let stored = 0;
+    for (const item of items) {
+      try {
+        await upsertItem(db, item, null, { corpusOnly: true });
+        stored++;
+      } catch (err) {
+        console.warn(`[backfill] ${opts.repo}#${item.number} skipped: ${(err as Error).message}`);
+      }
+    }
+    return {
+      repo: opts.repo, since, collected: stored, prs: items.filter((i) => i.kind === 'pr').length,
+      issues: items.filter((i) => i.kind === 'issue').length, capped: scan.capped, newCursor: scan.cursor, errors,
+    };
+  }
   await mapLimit(scan.changed, ENRICH_CONCURRENCY, async (issue) => {
     const login = issue.user?.login ?? 'ghost';
     let pr: PrDetails | null = null;
@@ -204,13 +225,14 @@ async function fetchPriorMerged(gh: GitHub, repo: string, login: string, created
   }
 }
 
-export async function upsertItem(db: pg.Pool, raw: Item, nightId: number | null): Promise<void> {
+export async function upsertItem(db: pg.Pool, raw: Item, nightId: number | null, opts: { corpusOnly?: boolean } = {}): Promise<void> {
   const i = scrubDeep(raw);
+  const corpusOnly = opts.corpusOnly ?? false;
   await db.query(
     `INSERT INTO items (repo, number, kind, title, body, author, author_association, author_account_age_days,
        author_prior_merged, state, draft, labels, additions, deletions, files_changed, has_tests, ci_status,
-       created_at, updated_at, closed_at, merged_at, raw, first_seen_night, last_seen_night)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$23)
+       created_at, updated_at, closed_at, merged_at, raw, first_seen_night, last_seen_night, corpus_only)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$23,$24)
      ON CONFLICT (repo, number) DO UPDATE SET
        kind = EXCLUDED.kind, title = EXCLUDED.title, body = EXCLUDED.body,
        author_association = EXCLUDED.author_association,
@@ -226,11 +248,13 @@ export async function upsertItem(db: pg.Pool, raw: Item, nightId: number | null)
        closed_at = EXCLUDED.closed_at, merged_at = EXCLUDED.merged_at, raw = EXCLUDED.raw,
        first_seen_night = COALESCE(items.first_seen_night, EXCLUDED.first_seen_night),
        last_seen_night = COALESCE(EXCLUDED.last_seen_night, items.last_seen_night),
+       -- A backfill never demotes an item the real collector already queued.
+       corpus_only = items.corpus_only AND EXCLUDED.corpus_only,
        collected_at = now()`,
     [
       i.repo, i.number, i.kind, i.title, i.body, i.author, i.authorAssociation, i.authorAccountAgeDays,
       i.authorPriorMerged, i.state, i.draft, i.labels, i.additions, i.deletions, i.filesChanged, i.hasTests,
-      i.ciStatus, i.createdAt, i.updatedAt, i.closedAt, i.mergedAt, JSON.stringify(i.raw), nightId,
+      i.ciStatus, i.createdAt, i.updatedAt, i.closedAt, i.mergedAt, JSON.stringify(i.raw), nightId, corpusOnly,
     ],
   );
 }
