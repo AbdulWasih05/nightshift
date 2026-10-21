@@ -1,0 +1,15 @@
+# Local stand-in for Tiger Data (Tiger Cloud runs the same timescaledb-ha image,
+# so pgvector + pgvectorscale + full-text search behave identically).
+services:
+  db:
+    image: timescale/timescaledb-ha:pg17
+    environment:
+      POSTGRES_USER: nightshift
+      POSTGRES_PASSWORD: nightshift
+      POSTGRES_DB: nightshift
+    ports:
+      - "5433:5432"
+    volumes:
+      - nightshift-db:/home/postgres/pgdata
+volumes:
+  nightshift-db:
