@@ -5,3 +5,6 @@ export * from './types.ts';
 export * from './collector.ts';
 export { createReadClient, createWriteClient, type GitHub } from './github/client.ts';
 export { mapIssue, summariseCi, isTestFile } from './github/map.ts';
+export * from './triage/index.ts';
+export * from './embed.ts';
+export * from './duplicates.ts';

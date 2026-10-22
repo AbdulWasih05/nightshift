@@ -32,3 +32,27 @@ Not fixed, by choice:
 ### 2026-10-21, late
 - **Fine-grained PAT:** it can only be scoped to the repo once the repo exists, so it gets created right after the repo is created (Oct 22). Until then, read-only collection uses the `gh` login token passed inline, never saved, through the read client that refuses non-GET requests. Night 1 must run on the scoped PAT.
 - **.tech domain: deferred.** Waiting to see what last week's .tech category winner did, then choosing the approach (dashboard on `<name>.tech` vs dropping the category). Nothing in core depends on it.
+
+## 2026-10-22
+
+- **Workflow change: one feature branch per unit, PR, squash merge into `main`** (user's call). `main` is the default branch and the repo allows squash merges only. Each unit costs 2 contributions (PR + squash commit); the budget is 7/day.
+- **All models go through Mastra's OpenAI-compatible config** (`{id, url, apiKey}`), so local Ollama and the Render-hosted fallback share one code path. `structuredOutput` uses `errorStrategy: 'fallback'` with a sentinel, and our own parser re-reads the raw text. The parser, not the model's JSON mode, is the source of truth.
+- **Fallback semantics:** a model that *errors or times out* (240s) hands over to the next model. A model that *answers with garbage* does not: that is NEEDS_HUMAN with `parse_ok=false`, so the 1B model never silently overrides a 4B answer.
+- **Post-parse rules enforced in code, not trusted to the prompt:** DUPLICATE must cite a number from the offered candidates; SPAM_OR_SLOP needs two evidence items; TRIVIAL_SAFE over 40 changed lines (non-bot) becomes NEEDS_HUMAN; drafts are trimmed to 80 words. Trigger for the trivial rule: in the pre-flight, v1 put temporal#11774 (+404/-10, a concurrency fix) in TRIVIAL_SAFE at 0.95. Prompt v1 itself is unchanged.
+- **Speed:** gemma3:4b takes 48-61s per item on the build laptop. A ~250-item night is 3.5-4h, which fits 02:00-06:00. Offline re-evals are the expensive part; keep labelled sets focused.
+- **Duplicate corpus:** the nightly collector only sees the last 24h, but duplicates are usually older. `nightshift backfill` stores 90 days of title/body/state (`corpus_only`, never triaged, cursor untouched). mastra backfill still to do.
+- **Duplicate gate calibrated on real data** (temporal, 1,559 items): nearest-neighbour cosine is >= 0.80 for 89% of items, >= 0.90 for 31%, >= 0.93 for 19%. Related-but-distinct pairs sit at 0.87-0.89, and the duplicate request pair #12211/#11497 at 0.96. Gate: vector-only >= 0.92; both halves agree at >= 0.85 with >= 3 shared title terms; keyword-only >= 4 shared title terms.
+
+### Builder-review of unit 2+3 (2026-10-22)
+Fixed:
+- **Blocker: timeouts never fell through to the next model.** Mastra 1.79 does not throw on abort; it resolves with `text: ''` and `finishReason: 'aborted'`. A hung 4b would have been logged as a parse failure on every item, at 240s each. `mastraGenerate` now throws `ModelTimeoutError`. The test mimics the real resolve-on-abort behaviour, not a rejection. A per-run circuit breaker skips a model after 3 consecutive failures.
+- **Duplicate gate too loose on real data.** Candidates must now be the same kind, older than the item, not referenced by it ("Fixes #1"), and, for PRs, still open (a duplicate PR is competing work). Shared terms are counted over titles only, ignoring lexemes under 3 chars and hyphenated compounds. Keyword-only matches need >= 4 shared terms covering >= 60% of the shorter title: temporal#12622 vs #12137 shared only the common phrase "task queue user data", and gemma3:4b called it a DUPLICATE.
+- **Demotions kept the model's draft.** A spam call overruled to NEEDS_HUMAN still carried "this looks like spam". Every demotion now clears `draft_reply` and caps confidence at 0.5; NEEDS_HUMAN never carries a draft.
+- **TRIVIAL_SAFE now fails closed:** a PR of unknown size is not trivial, and only dependabot/renovate with a dependency-bump title are exempt from the 40-line cap.
+- **Per-item isolation** in `triageBatch` (shared by CLI and workflow): duplicate-search failure means no candidates; a failed save is retried once, then recorded in `collect_errors` (stage `triage`) and the item stays pending. Embedding failure is non-fatal, and a failing batch is retried item by item.
+- Keyword-only candidates send `similarity: null` instead of 0; confidence 1.5 is out of range, not 1.5%.
+- The embedder unloads after each call (`keep_alive: 0`), so it does not take VRAM from gemma3:4b on the 4 GB GPU.
+
+Not fixed, by choice:
+- **SPAM_OR_SLOP "two tells" counts evidence items, not independent tells.** Revisit with night-1 data; there are no spam examples yet.
+- **Bug found in the latency check: backfill hid items from the collector.** The collector skips items it already holds at the same `updated_at`, and backfilled corpus rows counted as already held. timescaledb collected 5 of 27 items updated in 26h; the other 22 would never have been triaged. Corpus-only rows now never count as unchanged. A DB test covers it, and a re-collect gives 27/27.
