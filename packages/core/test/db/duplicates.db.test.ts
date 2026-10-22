@@ -31,7 +31,7 @@ const corpus: { number: number; kind: 'issue' | 'pr'; title: string; body?: stri
 ];
 
 beforeAll(async () => {
-  db = await freshTestDb();
+  db = await freshTestDb('duplicates');
   if (!db) return;
   for (const c of corpus) {
     const { rows } = await db.query<{ id: number }>(

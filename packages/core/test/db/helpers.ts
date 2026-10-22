@@ -6,11 +6,13 @@ import pg from 'pg';
 
 const MIGRATIONS = join(import.meta.dirname, '..', '..', '..', '..', 'db', 'migrations');
 
-export async function freshTestDb(): Promise<pg.Pool | null> {
+export async function freshTestDb(suite: string): Promise<pg.Pool | null> {
   const url = process.env.DATABASE_URL;
   if (!url) return null;
   const admin = new URL(url);
-  const testName = `${admin.pathname.slice(1)}_test`;
+  if (!/^[a-z0-9_]+$/.test(suite)) throw new Error(`bad suite name ${suite}`);
+  // One database per test file: vitest runs files in parallel.
+  const testName = `${admin.pathname.slice(1)}_test_${suite}`;
   const adminClient = new pg.Client({ connectionString: url, connectionTimeoutMillis: 3000 });
   try {
     await adminClient.connect();

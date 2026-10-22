@@ -141,10 +141,11 @@ async function readCursor(db: pg.Pool, repo: string): Promise<string | null> {
 }
 
 /** Numbers we already hold at exactly this updated_at: re-listed because `since` is inclusive, nothing new. */
-async function unchangedNumbers(db: pg.Pool, repo: string, issues: GhIssue[]): Promise<Set<number>> {
+export async function unchangedNumbers(db: pg.Pool, repo: string, issues: GhIssue[]): Promise<Set<number>> {
   if (issues.length === 0) return new Set();
   const { rows } = await db.query<{ number: number; updated_at: Date }>(
-    'SELECT number, updated_at FROM items WHERE repo = $1 AND number = ANY($2::int[])',
+    // Corpus-only (backfilled) rows never count as unchanged: the real collector must still enrich and queue them.
+    'SELECT number, updated_at FROM items WHERE repo = $1 AND number = ANY($2::int[]) AND NOT corpus_only',
     [repo, issues.map((i) => i.number)],
   );
   const stored = new Map(rows.map((r) => [r.number, r.updated_at.getTime()]));

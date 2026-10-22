@@ -55,3 +55,4 @@ Fixed:
 
 Not fixed, by choice:
 - **SPAM_OR_SLOP "two tells" counts evidence items, not independent tells.** Revisit with night-1 data; there are no spam examples yet.
+- **Bug found in the latency check: backfill hid items from the collector.** The collector skips items it already holds at the same `updated_at`, and backfilled corpus rows counted as already held. timescaledb collected 5 of 27 items updated in 26h; the other 22 would never have been triaged. Corpus-only rows now never count as unchanged. A DB test covers it, and a re-collect gives 27/27.
