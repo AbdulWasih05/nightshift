@@ -16,6 +16,8 @@ export interface NightshiftConfig {
   /** Cap per repo per night so a busy repo (mastra: ~150 items/day) cannot starve the others. */
   maxItemsPerRepo: number;
   promptVersion: string;
+  /** Nightly run time, cron + IANA timezone. Defaults to 02:00 in the machine's timezone. */
+  schedule: { cron: string; timezone: string };
 }
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -35,6 +37,10 @@ export function parseConfig(input: unknown): NightshiftConfig {
     initialLookbackHours: c.initialLookbackHours ?? 24,
     maxItemsPerRepo: c.maxItemsPerRepo ?? 200,
     promptVersion: c.promptVersion ?? 'v1',
+    schedule: {
+      cron: c.schedule?.cron ?? '0 2 * * *',
+      timezone: c.schedule?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
   };
 }
 

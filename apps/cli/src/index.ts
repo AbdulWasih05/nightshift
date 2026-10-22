@@ -1,6 +1,8 @@
 #!/usr/bin/env -S npx tsx
 import 'dotenv/config';
+import { resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
+import { describeSchedule, preflight, runNightNow, runWorker, SCHEDULE_ID, upsertSchedule } from '@nightshift/workflows';
 import {
   closePool,
   collectRepo,
@@ -9,6 +11,10 @@ import {
   findDuplicates,
   getPool,
   loadConfig,
+  loadDigest,
+  renderDigest,
+  renderTerminalSummary,
+  writeDigest,
   selectPending,
   triageBatch,
 } from '@nightshift/core';
@@ -161,6 +167,71 @@ program
           );
         },
       });
+    } finally {
+      await closePool();
+    }
+  });
+
+program
+  .command('worker')
+  .description('Run the Temporal worker (long-running; the 02:00 schedule needs it up)')
+  .action(async () => {
+    await runWorker();
+  });
+
+program
+  .command('schedule')
+  .description('Create or update the nightly Temporal schedule from nightshift.config.json, and show the next runs')
+  .action(async () => {
+    const { schedule } = loadConfig();
+    console.log(`${await upsertSchedule(schedule)} schedule "${SCHEDULE_ID}": ${schedule.cron} (${schedule.timezone})`);
+    const d = await describeSchedule();
+    console.log(`next runs: ${d?.next.map((t) => t.toString()).join(' | ')}${d?.paused ? ' [PAUSED]' : ''}`);
+  });
+
+program
+  .command('preflight')
+  .description('Check everything the nightly run needs: DB, allowlist, prompt, token, Ollama, schedule, worker, Sentry')
+  .action(async () => {
+    try {
+      if (!(await preflight())) process.exitCode = 1;
+    } finally {
+      await closePool();
+    }
+  });
+
+program
+  .command('run')
+  .description('Run a night now through Temporal and wait for it (needs `nightshift worker` running)')
+  .option('-r, --repo <owner/name...>', 'limit to these repos')
+  .option('-c, --chunk <n>', 'items per triage activity', (v) => Number.parseInt(v, 10))
+  .action(async (opts: { repo?: string[]; chunk?: number }) => {
+    const r = await runNightNow({ repos: opts.repo, chunkSize: opts.chunk });
+    console.log(`
+night ${r.nightId}: ${r.status}; collected ${JSON.stringify(r.collected)}; triaged ${r.triaged}, failed ${r.triageFailed}`);
+    if (r.failedRepos.length) console.log(`failed repos: ${r.failedRepos.join(', ')}`);
+    if (r.summary) console.log(`
+${r.summary}
+
+full digest: ${r.digestPath}`);
+  });
+
+program
+  .command('digest')
+  .description("Print the latest night's digest summary (or --night N) and rewrite docs/digests/<date>.md")
+  .option('-n, --night <id>', 'night id', (v) => Number.parseInt(v, 10))
+  .option('-a, --all', 'print the full markdown digest')
+  .action(async (opts: { night?: number; all?: boolean }) => {
+    const db = getPool();
+    try {
+      const nightId =
+        opts.night ?? (await db.query<{ id: number }>('SELECT max(id) AS id FROM nights')).rows[0]?.id;
+      if (!nightId) throw new Error('no nights yet; run `nightshift run` or wait for the schedule');
+      const d = await loadDigest(db, nightId);
+      const file = await writeDigest(d, resolve(process.cwd(), 'docs', 'digests'));
+      console.log(opts.all ? renderDigest(d) : `${renderTerminalSummary(d)}
+
+full digest: ${file}`);
     } finally {
       await closePool();
     }

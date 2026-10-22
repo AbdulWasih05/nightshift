@@ -8,6 +8,7 @@ import { ModelHealth, triageItem, type TriageOptions, type TriageRun } from './a
 import { buildTriageInput } from './input.ts';
 import type { HybridCandidate } from '../duplicates.ts';
 import { saveTriage, type PendingItem } from './store.ts';
+import { annotateActiveSpan, traceTriageItem } from '../telemetry.ts';
 
 export interface BatchItemResult {
   item: PendingItem;
@@ -20,14 +21,18 @@ export interface BatchItemResult {
 export interface BatchOptions extends TriageOptions {
   nightId: number | null;
   repos: string[];
+  /** The nightly workflow embeds in its own activity first. */
+  skipEmbed?: boolean;
   onItem?: (r: BatchItemResult) => void;
 }
 
 export async function triageBatch(db: pg.Pool, items: PendingItem[], opts: BatchOptions): Promise<BatchItemResult[]> {
-  try {
-    await embedPending(db, { repos: opts.repos });
-  } catch (err) {
-    console.warn(`[triage] embedding failed, duplicate search will be weaker this run: ${(err as Error).message}`);
+  if (!opts.skipEmbed) {
+    try {
+      await embedPending(db, { repos: opts.repos });
+    } catch (err) {
+      console.warn(`[triage] embedding failed, duplicate search will be weaker this run: ${(err as Error).message}`);
+    }
   }
 
   const health = opts.health ?? new ModelHealth();
@@ -41,7 +46,21 @@ export async function triageBatch(db: pg.Pool, items: PendingItem[], opts: Batch
         console.warn(`[triage] ${item.repo}#${item.number} duplicate search failed: ${(err as Error).message}`);
       }
       const input = buildTriageInput(item, result.duplicates);
-      result.run = await triageItem(input, { ...opts, health });
+      result.run = await traceTriageItem(
+        { repo: item.repo, number: item.number, kind: item.kind, promptVersion: opts.promptVersion, nightId: opts.nightId },
+        async () => {
+          const run = await triageItem(input, { ...opts, health });
+          annotateActiveSpan({
+            'nightshift.bucket': run.output.bucket,
+            'nightshift.model_path': run.modelPath,
+            'nightshift.parse_ok': run.parseOk,
+            'nightshift.fallbacks': run.failures.length,
+            'nightshift.duplicate_candidates': result.duplicates.length,
+            'nightshift.latency_ms': run.latencyMs,
+          });
+          return run;
+        },
+      );
       const save = () => saveTriage(db, { itemId: item.id, nightId: opts.nightId, promptVersion: opts.promptVersion, input, run: result.run! });
       try {
         result.triageId = await save();

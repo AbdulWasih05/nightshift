@@ -7,7 +7,10 @@ export interface PendingItem extends ItemRow {
   id: number;
 }
 
-/** Items with no triage row yet for this night + prompt version. Open items only: closed ones need no reply. */
+/**
+ * Items with no triage row yet for this night + prompt version. Open items only: closed ones need no reply.
+ * With a night id, only items that night's collection saw change (`last_seen_night`) are in the queue.
+ */
 export async function selectPending(
   db: pg.Pool,
   opts: { repos: string[]; promptVersion: string; nightId: number | null; limit: number },
@@ -18,6 +21,7 @@ export async function selectPending(
             i.has_tests, i.ci_status, i.draft, i.labels
        FROM items i
       WHERE i.repo = ANY($1) AND i.state = 'open' AND NOT i.corpus_only
+        AND ($3::int IS NULL OR i.last_seen_night = $3)
         AND NOT EXISTS (
           SELECT 1 FROM triage t
            WHERE t.item_id = i.id AND t.prompt_version = $2 AND t.night_id IS NOT DISTINCT FROM $3)

@@ -7,6 +7,7 @@ import { Agent } from '@mastra/core/agent';
 import { needsHuman, parseTriageOutput, triageOutputSchema, type TriageOutput } from './contract.ts';
 import { renderUserMessage, type TriageInput } from './input.ts';
 import { modelChain, type ModelSpec } from './models.ts';
+import { traceChat } from '../telemetry.ts';
 
 export interface GenerateResult {
   text: string;
@@ -120,8 +121,15 @@ export async function triageItem(input: TriageInput, opts: TriageOptions): Promi
     }
     const signal = AbortSignal.timeout(timeoutMs);
     try {
-      const res = await generate(model, system, user, signal);
-      if (signal.aborted) throw new ModelTimeoutError(model.path);
+      const res = await traceChat(
+        model,
+        async () => {
+          const r = await generate(model, system, user, signal);
+          if (signal.aborted) throw new ModelTimeoutError(model.path);
+          return r;
+        },
+        (r) => ({ tokensIn: r.tokensIn, tokensOut: r.tokensOut, ok: true }),
+      );
       opts.health?.succeeded(model.path);
       const parsed = parseTriageOutput(res.text, {
         duplicateNumbers: input.top_duplicates.map((d) => d.number),

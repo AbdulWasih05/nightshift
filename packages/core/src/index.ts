@@ -8,3 +8,6 @@ export { mapIssue, summariseCi, isTestFile } from './github/map.ts';
 export * from './triage/index.ts';
 export * from './embed.ts';
 export * from './duplicates.ts';
+export * from './nights.ts';
+export * from './digest.ts';
+export * from './telemetry.ts';
