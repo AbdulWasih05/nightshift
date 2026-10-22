@@ -67,12 +67,39 @@ describe('parseTriageOutput: rules the model cannot be trusted with', () => {
     expect(parseTriageOutput(JSON.stringify(two)).output.bucket).toBe('SPAM_OR_SLOP');
   });
 
-  it('TRIVIAL_SAFE over 40 changed lines becomes NEEDS_HUMAN unless a bot bump', () => {
+  it('TRIVIAL_SAFE over 40 changed lines becomes NEEDS_HUMAN unless a real dependency bump', () => {
     const t = JSON.stringify({ ...ok, bucket: 'TRIVIAL_SAFE', draft_reply: null });
-    expect(parseTriageOutput(t, { changedLines: 414, author: 'alice' }).output.bucket).toBe('NEEDS_HUMAN');
-    expect(parseTriageOutput(t, { changedLines: 12, author: 'alice' }).output.bucket).toBe('TRIVIAL_SAFE');
-    expect(parseTriageOutput(t, { changedLines: 900, author: 'dependabot[bot]' }).output.bucket).toBe('TRIVIAL_SAFE');
-    expect(parseTriageOutput(t, { changedLines: null }).output.bucket).toBe('TRIVIAL_SAFE');
+    expect(parseTriageOutput(t, { type: 'pr', changedLines: 414, author: 'alice' }).output.bucket).toBe('NEEDS_HUMAN');
+    expect(parseTriageOutput(t, { type: 'pr', changedLines: 12, author: 'alice' }).output.bucket).toBe('TRIVIAL_SAFE');
+    expect(parseTriageOutput(t, { type: 'pr', changedLines: 900, author: 'dependabot[bot]', title: 'Bump grpc from 1.65 to 1.66' }).output.bucket).toBe('TRIVIAL_SAFE');
+    expect(parseTriageOutput(t, { type: 'pr', changedLines: 900, author: 'renovate[bot]', title: 'chore(deps): update dependency x' }).output.bucket).toBe('TRIVIAL_SAFE');
+  });
+
+  it('TRIVIAL_SAFE fails closed: unknown PR size, or a non-dependency bot', () => {
+    const t = JSON.stringify({ ...ok, bucket: 'TRIVIAL_SAFE', draft_reply: null });
+    expect(parseTriageOutput(t, { type: 'pr', changedLines: null }).output.bucket).toBe('NEEDS_HUMAN');
+    expect(parseTriageOutput(t, { type: 'pr', changedLines: 2000, author: 'github-actions[bot]', title: 'Regenerate API' }).output.bucket).toBe('NEEDS_HUMAN');
+    expect(parseTriageOutput(t, { type: 'pr', changedLines: 2000, author: 'dependabot[bot]', title: 'Rewrite the scheduler' }).output.bucket).toBe('NEEDS_HUMAN');
+    expect(parseTriageOutput(t, { type: 'issue', changedLines: null }).output.bucket).toBe('TRIVIAL_SAFE');
+  });
+
+  it('a demoted item loses the model draft and its confidence is capped', () => {
+    const spam = { ...ok, bucket: 'SPAM_OR_SLOP', confidence: 0.95, evidence: ['generic title'], draft_reply: 'This looks like low-effort spam.' };
+    const r = parseTriageOutput(JSON.stringify(spam));
+    expect(r.output).toMatchObject({ bucket: 'NEEDS_HUMAN', draft_reply: null });
+    expect(r.output.confidence).toBeLessThanOrEqual(0.5);
+    const dup = { ...ok, bucket: 'DUPLICATE', reason: 'Closing as duplicate.', draft_reply: 'Closing as a duplicate.' };
+    expect(parseTriageOutput(JSON.stringify(dup), { duplicateNumbers: [3] }).output.draft_reply).toBeNull();
+  });
+
+  it('NEEDS_HUMAN never carries a draft, even when the model wrote one', () => {
+    const nh = { ...ok, bucket: 'NEEDS_HUMAN', draft_reply: 'LGTM, merging!' };
+    expect(parseTriageOutput(JSON.stringify(nh)).output.draft_reply).toBeNull();
+  });
+
+  it('confidence 1.5 is out of range, not 1.5%', () => {
+    expect(parseTriageOutput(JSON.stringify({ ...ok, confidence: 1.5 })).parseOk).toBe(false);
+    expect(parseTriageOutput(JSON.stringify({ ...ok, confidence: 85 })).output.confidence).toBe(0.85);
   });
 
   it('long drafts are trimmed to 80 words', () => {

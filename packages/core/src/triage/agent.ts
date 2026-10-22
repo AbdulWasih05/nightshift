@@ -59,6 +59,9 @@ export const mastraGenerate: GenerateFn = async (model, system, user, signal) =>
     abortSignal: signal,
     structuredOutput: { schema: triageOutputSchema, errorStrategy: 'fallback', fallbackValue: FALLBACK_SENTINEL },
   });
+  // Mastra 1.79 does not throw on abort: it resolves with text '' and finishReason 'aborted'. Without this
+  // check a hung model looks like a parse failure and the next model in the chain is never tried.
+  if (signal.aborted || res.finishReason === 'aborted') throw new ModelTimeoutError(model.path);
   return {
     text: res.text ?? '',
     tokensIn: res.usage?.inputTokens ?? null,
@@ -66,12 +69,39 @@ export const mastraGenerate: GenerateFn = async (model, system, user, signal) =>
   };
 };
 
+export class ModelTimeoutError extends Error {
+  constructor(path: string) {
+    super(`${path} timed out`);
+    this.name = 'ModelTimeoutError';
+  }
+}
+
+/**
+ * Per-run circuit breaker. After `threshold` consecutive failures a model is skipped for the rest of the run,
+ * so a wedged Ollama costs a few timeouts, not 240s on every remaining item.
+ */
+export class ModelHealth {
+  private consecutive = new Map<string, number>();
+  constructor(private threshold = 3) {}
+  isOpen(path: string): boolean {
+    return (this.consecutive.get(path) ?? 0) >= this.threshold;
+  }
+  failed(path: string): void {
+    this.consecutive.set(path, (this.consecutive.get(path) ?? 0) + 1);
+  }
+  succeeded(path: string): void {
+    this.consecutive.set(path, 0);
+  }
+}
+
 export interface TriageOptions {
   promptVersion: string;
   models?: ModelSpec[];
   generate?: GenerateFn;
   /** Per-model timeout. The 4B model on the build laptop takes ~15-60s per item. */
   timeoutMs?: number;
+  /** Shared across a run so repeated failures trip the breaker. */
+  health?: ModelHealth;
 }
 
 export async function triageItem(input: TriageInput, opts: TriageOptions): Promise<TriageRun> {
@@ -84,13 +114,21 @@ export async function triageItem(input: TriageInput, opts: TriageOptions): Promi
   const started = Date.now();
 
   for (const model of models) {
+    if (opts.health?.isOpen(model.path)) {
+      failures.push({ path: model.path, error: 'skipped: circuit open after repeated failures this run' });
+      continue;
+    }
     const signal = AbortSignal.timeout(timeoutMs);
     try {
       const res = await generate(model, system, user, signal);
+      if (signal.aborted) throw new ModelTimeoutError(model.path);
+      opts.health?.succeeded(model.path);
       const parsed = parseTriageOutput(res.text, {
         duplicateNumbers: input.top_duplicates.map((d) => d.number),
         changedLines: input.additions === null ? null : input.additions + (input.deletions ?? 0),
         author: input.author,
+        title: input.title,
+        type: input.type,
       });
       return {
         ...parsed,
@@ -102,6 +140,7 @@ export async function triageItem(input: TriageInput, opts: TriageOptions): Promi
         failures,
       };
     } catch (err) {
+      opts.health?.failed(model.path);
       failures.push({ path: model.path, error: (err as Error).message.slice(0, 500) });
     }
   }

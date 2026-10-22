@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { triageItem, type GenerateFn } from '../src/triage/agent.ts';
+import { ModelHealth, triageItem, type GenerateFn } from '../src/triage/agent.ts';
 import { buildTriageInput, cleanBody, BODY_LIMIT } from '../src/triage/input.ts';
 import type { ModelSpec } from '../src/triage/models.ts';
 import { modelChain } from '../src/triage/models.ts';
@@ -61,13 +61,28 @@ describe('triageItem fallback chain', () => {
     expect(r.rawOutput).toBe('I am not sure.');
   });
 
-  it('a timeout counts as a model failure', async () => {
+  it('a timeout counts as a model failure even though Mastra resolves with empty text instead of throwing', async () => {
+    // Mastra 1.79 on abort: resolves { text: '', finishReason: 'aborted' }. Mimic that, not a rejection.
     const generate: GenerateFn = (m, _s, _u, signal) =>
       m.path === 'gemma3:4b'
-        ? new Promise((_, rej) => signal.addEventListener('abort', () => rej(new Error('aborted'))))
+        ? new Promise((resolve) => signal.addEventListener('abort', () => resolve({ text: '', tokensIn: null, tokensOut: null })))
         : Promise.resolve({ text: good, tokensIn: 1, tokensOut: 1 });
     const r = await triageItem(input, { promptVersion: 'v1', models, generate, timeoutMs: 20 });
     expect(r.modelPath).toBe('gemma3:1b');
+    expect(r.failures[0]).toMatchObject({ path: 'gemma3:4b', error: expect.stringMatching(/timed out/) });
+  });
+
+  it('circuit breaker skips a model after 3 consecutive failures in a run', async () => {
+    const calls: string[] = [];
+    const generate: GenerateFn = async (m) => {
+      calls.push(m.path);
+      if (m.path === 'gemma3:4b') throw new Error('ECONNREFUSED');
+      return { text: good, tokensIn: 1, tokensOut: 1 };
+    };
+    const health = new ModelHealth(3);
+    for (let i = 0; i < 5; i++) await triageItem(input, { promptVersion: 'v1', models, generate, health });
+    expect(calls.filter((c) => c === 'gemma3:4b')).toHaveLength(3);
+    expect(calls.filter((c) => c === 'gemma3:1b')).toHaveLength(5);
   });
 
   it('rejects path-traversal prompt versions', async () => {

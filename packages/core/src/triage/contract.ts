@@ -53,7 +53,10 @@ function coerce(raw: Record<string, unknown>): Record<string, unknown> {
   const out = { ...raw };
   if (typeof out.bucket === 'string') out.bucket = out.bucket.trim().toUpperCase().replace(/[\s-]+/g, '_');
   if (typeof out.confidence === 'string') out.confidence = Number.parseFloat(out.confidence);
-  if (typeof out.confidence === 'number' && out.confidence > 1 && out.confidence <= 100) out.confidence = out.confidence / 100;
+  // Only whole numbers 2..100 are read as percentages; 1.5 is out of range, not 1.5%.
+  if (typeof out.confidence === 'number' && Number.isInteger(out.confidence) && out.confidence >= 2 && out.confidence <= 100) {
+    out.confidence = out.confidence / 100;
+  }
   if (typeof out.evidence === 'string') out.evidence = [out.evidence];
   if (out.evidence === undefined || out.evidence === null) out.evidence = [];
   if (out.draft_reply === undefined || out.draft_reply === '') out.draft_reply = null;
@@ -62,9 +65,27 @@ function coerce(raw: Record<string, unknown>): Record<string, unknown> {
 
 export interface RuleContext {
   duplicateNumbers?: number[];
-  /** additions + deletions; null for issues. */
+  /** additions + deletions; null for issues, and for PRs whose enrichment failed. */
   changedLines?: number | null;
   author?: string;
+  title?: string;
+  type?: 'pr' | 'issue';
+}
+
+const DEP_BOTS = new Set(['dependabot[bot]', 'renovate[bot]']);
+const DEP_BUMP_TITLE = /^(build\(deps(-dev)?\)|chore\(deps(-dev)?\)|bump |update dependency )/i;
+
+function isDependencyBump(ctx: RuleContext): boolean {
+  return DEP_BOTS.has(ctx.author ?? '') && DEP_BUMP_TITLE.test(ctx.title ?? '');
+}
+
+/** Overruling the model: the draft was written for the model's bucket, so it must not survive the demotion. */
+function demote(o: TriageOutput, reason: string, note: string): ParsedTriage {
+  return {
+    output: { ...o, bucket: 'NEEDS_HUMAN', confidence: Math.min(o.confidence, 0.5), reason, draft_reply: null },
+    parseOk: true,
+    note,
+  };
 }
 
 /** TRIVIAL_SAFE ceiling for human-authored PRs. Bot dependency bumps are exempt (lockfile diffs are large). */
@@ -96,32 +117,29 @@ export function parseTriageOutput(text: string | null | undefined, ctx: RuleCont
 /** Rules from the prompt that we do not trust a 4B model to follow, enforced after parsing. */
 function enforceRules(o: TriageOutput, ctx: RuleContext): ParsedTriage {
   // TRIVIAL_SAFE means small. Pre-flight on 2026-10-22: gemma3:4b called a 414-line concurrency fix trivial at 0.95.
-  if (o.bucket === 'TRIVIAL_SAFE' && (ctx.changedLines ?? 0) > TRIVIAL_MAX_LINES && !ctx.author?.endsWith('[bot]')) {
-    return {
-      output: { ...o, bucket: 'NEEDS_HUMAN', reason: `model said trivial but the diff is ${ctx.changedLines} lines: ${o.reason}` },
-      parseOk: true,
-      note: 'trivial-too-large',
-    };
+  // Fails closed: a PR of unknown size is not trivial; only real dependency bumps from dependency bots are exempt.
+  if (o.bucket === 'TRIVIAL_SAFE' && !isDependencyBump(ctx)) {
+    if (ctx.type === 'pr' && (ctx.changedLines === null || ctx.changedLines === undefined)) {
+      return demote(o, `model said trivial but the diff size is unknown: ${o.reason}`, 'trivial-unknown-size');
+    }
+    if ((ctx.changedLines ?? 0) > TRIVIAL_MAX_LINES) {
+      return demote(o, `model said trivial but the diff is ${ctx.changedLines} lines: ${o.reason}`, 'trivial-too-large');
+    }
   }
   // DUPLICATE must cite a number that was actually offered as a candidate.
   if (o.bucket === 'DUPLICATE') {
     const cited = [...`${o.reason} ${o.evidence.join(' ')}`.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
     const offered = new Set(ctx.duplicateNumbers ?? []);
     if (!cited.some((n) => offered.has(n))) {
-      return {
-        output: { ...o, bucket: 'NEEDS_HUMAN', reason: `model said duplicate without citing a candidate: ${o.reason}` },
-        parseOk: true,
-        note: 'duplicate-without-citation',
-      };
+      return demote(o, `model said duplicate without citing a candidate: ${o.reason}`, 'duplicate-without-citation');
     }
   }
-  // SPAM_OR_SLOP needs two independent tells.
+  // SPAM_OR_SLOP needs two tells. (Counts evidence items; independence of the tells is not checked yet.)
   if (o.bucket === 'SPAM_OR_SLOP' && o.evidence.length < 2) {
-    return {
-      output: { ...o, bucket: 'NEEDS_HUMAN', reason: `model said spam with fewer than two tells: ${o.reason}` },
-      parseOk: true,
-      note: 'spam-single-tell',
-    };
+    return demote(o, `model said spam with fewer than two tells: ${o.reason}`, 'spam-single-tell');
+  }
+  if (o.bucket === 'NEEDS_HUMAN' && o.draft_reply) {
+    return { output: { ...o, draft_reply: null }, parseOk: true, note: 'needs-human-draft-dropped' };
   }
   // Draft must stay short; trim rather than reject.
   if (o.draft_reply) {

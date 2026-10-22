@@ -2,7 +2,6 @@
 import 'dotenv/config';
 import { Command, InvalidArgumentError } from 'commander';
 import {
-  buildTriageInput,
   closePool,
   collectRepo,
   createReadClient,
@@ -10,9 +9,8 @@ import {
   findDuplicates,
   getPool,
   loadConfig,
-  saveTriage,
   selectPending,
-  triageItem,
+  triageBatch,
 } from '@nightshift/core';
 
 const program = new Command().name('nightshift').description("The maintainer's night shift. Never acts without approval.");
@@ -96,6 +94,20 @@ program
   });
 
 program
+  .command('embed')
+  .description('Embed items whose title/body changed since last embedded')
+  .option('-r, --repo <owner/name...>', 'limit to these repos')
+  .action(async (opts: { repo?: string[] }) => {
+    const db = getPool();
+    try {
+      const repos = opts.repo ?? loadConfig().repos.map((r) => r.repo);
+      console.log(`embedded ${await embedPending(db, { repos })} items`);
+    } finally {
+      await closePool();
+    }
+  });
+
+program
   .command('dups')
   .description('Show hybrid duplicate candidates for one item (debug)')
   .argument('<repo>', 'owner/name')
@@ -133,22 +145,22 @@ program
     try {
       const pending = await selectPending(db, { repos, promptVersion, nightId: null, limit: opts.limit });
       console.log(`triaging ${pending.length} items with prompt ${promptVersion}`);
-      const embedded = await embedPending(db, { repos });
-      if (embedded) console.log(`embedded ${embedded} items`);
-      for (const item of pending) {
-        const dups = await findDuplicates(db, item.id);
-        const input = buildTriageInput(item, dups);
-        const run = await triageItem(input, { promptVersion });
-        await saveTriage(db, { itemId: item.id, nightId: null, promptVersion, input, run });
-        const fell = run.failures.length ? ` (after ${run.failures.map((f) => f.path).join(' -> ')} failed)` : '';
-        console.log(
-          `${item.repo}#${item.number} ${run.output.bucket} ${run.output.confidence.toFixed(2)} ` +
-            `[${run.modelPath}${fell}, ${(run.latencyMs / 1000).toFixed(1)}s, ${run.tokensIn ?? '?'}→${run.tokensOut ?? '?'} tok` +
-            `${run.parseOk ? '' : ', PARSE FAIL'}${run.note ? `, ${run.note}` : ''}] ${run.output.reason}` +
-            (dups.length ? `
-    dup candidates: ${dups.map((d) => `#${d.number} (${d.source}: ${d.why})`).join(' | ')}` : ''),
-        );
-      }
+      await triageBatch(db, pending, {
+        promptVersion,
+        nightId: null,
+        repos,
+        onItem: ({ item, run, duplicates, error }) => {
+          if (!run) return console.log(`${item.repo}#${item.number} ERROR ${error} (stays pending)`);
+          const fell = run.failures.length ? ` (after ${run.failures.map((f) => f.path).join(' -> ')} failed)` : '';
+          console.log(
+            `${item.repo}#${item.number} ${run.output.bucket} ${run.output.confidence.toFixed(2)} ` +
+              `[${run.modelPath}${fell}, ${(run.latencyMs / 1000).toFixed(1)}s, ${run.tokensIn ?? '?'}→${run.tokensOut ?? '?'} tok` +
+              `${run.parseOk ? '' : ', PARSE FAIL'}${run.note ? `, ${run.note}` : ''}] ${run.output.reason}` +
+              (duplicates.length ? `
+    dup candidates: ${duplicates.map((d) => `#${d.number} (${d.source}: ${d.why})`).join(' | ')}` : ''),
+          );
+        },
+      });
     } finally {
       await closePool();
     }

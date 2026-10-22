@@ -26,7 +26,8 @@ export function ollamaEmbedder(
     const res = await fetch(`${host.replace(/\/$/, '')}/api/embed`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, input: texts }),
+      // Unload right away: on a 4 GB GPU a resident embedder pushes more of gemma3:4b onto the CPU.
+      body: JSON.stringify({ model, input: texts, keep_alive: 0 }),
       signal: AbortSignal.timeout(120_000),
     });
     if (!res.ok) throw new Error(`ollama embed ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -63,18 +64,34 @@ export async function embedPending(
     .filter((r) => r.hash !== r.old);
 
   let done = 0;
+  const failed: { id: number; error: string }[] = [];
+  const store = async (id: number, hash: string, v: number[]) => {
+    await db.query(
+      `INSERT INTO embeddings (item_id, model, input_hash, embedding) VALUES ($1, $2, $3, $4::vector)
+       ON CONFLICT (item_id) DO UPDATE SET model = EXCLUDED.model, input_hash = EXCLUDED.input_hash,
+         embedding = EXCLUDED.embedding, embedded_at = now()`,
+      [id, model, hash, toVectorLiteral(v)],
+    );
+    done++;
+  };
   for (let i = 0; i < todo.length; i += BATCH) {
     const batch = todo.slice(i, i + BATCH);
-    const vectors = await embed(batch.map((b) => b.text));
-    for (const [j, b] of batch.entries()) {
-      await db.query(
-        `INSERT INTO embeddings (item_id, model, input_hash, embedding) VALUES ($1, $2, $3, $4::vector)
-         ON CONFLICT (item_id) DO UPDATE SET model = EXCLUDED.model, input_hash = EXCLUDED.input_hash,
-           embedding = EXCLUDED.embedding, embedded_at = now()`,
-        [b.id, model, b.hash, toVectorLiteral(vectors[j]!)],
-      );
+    try {
+      const vectors = await embed(batch.map((b) => b.text));
+      for (const [j, b] of batch.entries()) await store(b.id, b.hash, vectors[j]!);
+    } catch {
+      // One bad input fails the whole batch; retry singly so only that item is skipped.
+      for (const b of batch) {
+        try {
+          await store(b.id, b.hash, (await embed([b.text]))[0]!);
+        } catch (err) {
+          failed.push({ id: b.id, error: (err as Error).message.slice(0, 300) });
+        }
+      }
     }
-    done += batch.length;
+  }
+  if (failed.length) {
+    console.warn(`[embed] ${failed.length} items not embedded (duplicate search skips them); first error: ${failed[0]!.error}`);
   }
   return done;
 }

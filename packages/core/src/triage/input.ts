@@ -4,7 +4,7 @@
 export interface DuplicateCandidate {
   number: number;
   title: string;
-  similarity: number; // fused hybrid score, 0..1
+  similarity: number | null; // vector cosine 0..1, null for keyword-only matches
   why: string; // e.g. "vector 0.91 + keyword match on 'retry policy'"
 }
 
