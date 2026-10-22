@@ -35,37 +35,39 @@ try {
   const nights = (
     await db.query<NightRow>(`
       SELECT n.*,
-        (SELECT count(*) FROM triage t WHERE t.night_id = n.id) AS triaged,
-        (SELECT count(*) FROM triage t WHERE t.night_id = n.id
+        (SELECT count(*) FROM triage t WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version) AS triaged,
+        (SELECT count(*) FROM triage t WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version
            AND NOT EXISTS (SELECT 1 FROM triage p WHERE p.item_id = t.item_id AND p.night_id < n.id)) AS new_items,
-        (SELECT count(*) FROM triage t WHERE t.night_id = n.id AND NOT t.parse_ok) AS parse_fail,
-        (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) FROM triage t WHERE t.night_id = n.id) AS median_ms,
-        (SELECT sum(tokens_in) FROM triage t WHERE t.night_id = n.id) AS tokens_in,
-        (SELECT sum(tokens_out) FROM triage t WHERE t.night_id = n.id) AS tokens_out,
-        (SELECT count(*) FROM triage t JOIN labels_human l ON l.item_id = t.item_id WHERE t.night_id = n.id) AS labelled,
-        (SELECT count(*) FROM triage t JOIN labels_human l ON l.item_id = t.item_id WHERE t.night_id = n.id AND l.bucket = t.bucket) AS correct,
-        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND a.action = 'approve') AS approved,
-        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND a.action = 'edit') AS edited,
-        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND a.action = 'skip') AS skipped,
-        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND a.action = 'post') AS posted,
+        (SELECT count(*) FROM triage t WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version AND NOT t.parse_ok) AS parse_fail,
+        (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) FROM triage t WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version) AS median_ms,
+        (SELECT sum(tokens_in) FROM triage t WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version) AS tokens_in,
+        (SELECT sum(tokens_out) FROM triage t WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version) AS tokens_out,
+        (SELECT count(*) FROM triage t JOIN labels_human l ON l.item_id = t.item_id WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version) AS labelled,
+        (SELECT count(*) FROM triage t JOIN labels_human l ON l.item_id = t.item_id WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version AND l.bucket = t.bucket) AS correct,
+        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version AND a.action = 'approve') AS approved,
+        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version AND a.action = 'edit') AS edited,
+        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version AND a.action = 'skip') AS skipped,
+        (SELECT count(*) FROM approvals a JOIN triage t ON t.id = a.triage_id WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version AND a.action = 'post') AS posted,
         (SELECT count(*) FROM collect_errors e WHERE e.night_id = n.id) AS errors
       FROM nights n ORDER BY n.id`)
   ).rows;
 
   const buckets = (
     await db.query<{ night_id: number; bucket: string; n: string }>(
-      'SELECT night_id, bucket, count(*) AS n FROM triage WHERE night_id IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2',
+      `SELECT t.night_id, t.bucket, count(*) AS n FROM triage t JOIN nights n ON n.id = t.night_id
+        WHERE t.prompt_version = n.prompt_version GROUP BY 1, 2 ORDER BY 1, 2`,
     )
   ).rows;
   const models = (
     await db.query<{ night_id: number; model_path: string; n: string }>(
-      'SELECT night_id, model_path, count(*) AS n FROM triage WHERE night_id IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2',
+      `SELECT t.night_id, t.model_path, count(*) AS n FROM triage t JOIN nights n ON n.id = t.night_id
+        WHERE t.prompt_version = n.prompt_version GROUP BY 1, 2 ORDER BY 1, 2`,
     )
   ).rows;
   const perRepo = (
     await db.query<{ night_id: number; repo: string; n: string }>(
-      `SELECT t.night_id, i.repo, count(*) AS n FROM triage t JOIN items i ON i.id = t.item_id
-        WHERE t.night_id IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2`,
+      `SELECT t.night_id, i.repo, count(*) AS n FROM triage t JOIN items i ON i.id = t.item_id JOIN nights n ON n.id = t.night_id
+        WHERE t.prompt_version = n.prompt_version GROUP BY 1, 2 ORDER BY 1, 2`,
     )
   ).rows;
 

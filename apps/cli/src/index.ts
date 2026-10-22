@@ -1,12 +1,22 @@
 #!/usr/bin/env -S npx tsx
 import 'dotenv/config';
 import { resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { Command, InvalidArgumentError } from 'commander';
 import { describeSchedule, ONCE_SCHEDULE_ID, preflight, runNightNow, runWorker, SCHEDULE_ID, scheduleOnce, upsertSchedule } from '@nightshift/workflows';
 import {
   closePool,
   collectRepo,
   createReadClient,
+  createWriteClient,
+  loadEvalRows,
+  postApproved,
+  recordApproval,
+  recordLabel,
+  replayCandidate,
+  score,
+  unlabelled,
+  writeEval,
   embedPending,
   findDuplicates,
   getPool,
@@ -258,6 +268,141 @@ program
       console.log(opts.all ? renderDigest(d) : `${renderTerminalSummary(d)}
 
 full digest: ${file}`);
+    } finally {
+      await closePool();
+    }
+  });
+
+const KEYS: Record<string, string> = { d: 'DUPLICATE', s: 'SPAM_OR_SLOP', o: 'OUT_OF_SCOPE', t: 'NEEDS_TESTS_OR_INFO', v: 'TRIVIAL_SAFE', h: 'NEEDS_HUMAN' };
+const labeller = () => process.env.NIGHTSHIFT_LABELLER ?? 'maintainer';
+
+async function latestNight(db: ReturnType<typeof getPool>): Promise<number> {
+  const id = (await db.query<{ id: number }>("SELECT max(id) AS id FROM nights WHERE status <> 'running'")).rows[0]?.id;
+  if (!id) throw new Error('no finished night yet');
+  return id;
+}
+
+program
+  .command('review')
+  .description("Label a night's items as the maintainer (the review step, and the ground truth for eval). Enter = agree with the model.")
+  .option('-n, --night <id>', 'night id (default: latest finished)', (v) => Number.parseInt(v, 10))
+  .action(async (opts: { night?: number }) => {
+    const db = getPool();
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const nightId = opts.night ?? (await latestNight(db));
+      const items = await unlabelled(db, nightId);
+      console.log(`night ${nightId}: ${items.length} unlabelled. Keys: [enter] agree, d DUP, s SPAM, o OUT_OF_SCOPE, t TESTS/INFO, v TRIVIAL, h HUMAN, n skip, q quit\n`);
+      let done = 0;
+      for (const [i, it] of items.entries()) {
+        const path = it.kind === 'pr' ? 'pull' : 'issues';
+        console.log(`[${i + 1}/${items.length}] ${it.repo}#${it.number} ${it.kind.toUpperCase()}  ${it.title}`);
+        console.log(`  https://github.com/${it.repo}/${path}/${it.number}`);
+        console.log(`  model: ${it.bucket}: ${it.reason}`);
+        if (it.draft_reply) console.log(`  draft: ${it.draft_reply}`);
+        const key = (await rl.question('  your bucket> ')).trim().toLowerCase();
+        if (key === 'q') break;
+        if (key === 'n') continue;
+        const bucket = key === '' ? it.bucket : KEYS[key];
+        if (!bucket) {
+          console.log('  unknown key, skipped\n');
+          continue;
+        }
+        const reason = (await rl.question(`  one-line reason${key === '' ? ' [enter = "agree"]' : ''}> `)).trim() || (key === '' ? 'agree' : '');
+        if (!reason) {
+          console.log('  a reason is required for an override; skipped\n');
+          continue;
+        }
+        await recordLabel(db, { repo: it.repo, number: it.number, bucket, reason, labeller: labeller() });
+        done++;
+        console.log('');
+      }
+      console.log(`labelled ${done}. Next: pnpm nightshift eval`);
+    } finally {
+      rl.close();
+      await closePool();
+    }
+  });
+
+program
+  .command('label')
+  .description('Label one item: nightshift label owner/repo#123 NEEDS_HUMAN "touches the scheduler"')
+  .argument('<item>', 'owner/repo#number')
+  .argument('<bucket>', 'DUPLICATE | SPAM_OR_SLOP | OUT_OF_SCOPE | NEEDS_TESTS_OR_INFO | TRIVIAL_SAFE | NEEDS_HUMAN')
+  .argument('<reason>', 'one line')
+  .action(async (item: string, bucket: string, reason: string) => {
+    const m = /^([^#\s]+\/[^#\s]+)#(\d+)$/.exec(item);
+    if (!m) throw new InvalidArgumentError(`expected owner/repo#number, got ${item}`);
+    const db = getPool();
+    try {
+      await recordLabel(db, { repo: m[1]!, number: Number(m[2]), bucket, reason, labeller: labeller() });
+      console.log(`labelled ${item} ${bucket.toUpperCase()}`);
+    } finally {
+      await closePool();
+    }
+  });
+
+program
+  .command('eval')
+  .description('Score model buckets against human labels; write docs/eval/<date>-<prompt>.md. --replay re-runs a candidate prompt on the stored inputs first.')
+  .option('-p, --prompt <version>', 'prompt version to score (default: pinned)')
+  .option('--replay <candidate>', 'replay this candidate prompt over every labelled item (GPU, ~1 min/item), then score both')
+  .option('--night <ids...>', 'limit to these nights')
+  .action(async (opts: { prompt?: string; replay?: string; night?: string[] }) => {
+    const db = getPool();
+    try {
+      const nights = opts.night?.map((n) => Number.parseInt(n, 10));
+      const base = opts.prompt ?? loadConfig().promptVersion;
+      const versions = [base];
+      if (opts.replay) {
+        const n = await replayCandidate(db, {
+          base,
+          candidate: opts.replay,
+          nights,
+          onItem: (done, of) => process.stdout.write(`\rreplaying ${opts.replay}: ${done}/${of}`),
+        });
+        console.log(`\nreplayed ${n} items with ${opts.replay}`);
+        versions.push(opts.replay);
+      }
+      const date = new Date().toISOString().slice(0, 10);
+      for (const v of versions) {
+        const e = score(await loadEvalRows(db, { promptVersion: v, nights }), v);
+        const file = await writeEval(e, resolve(process.cwd(), 'docs', 'eval'), date);
+        console.log(`${v}: ${e.n ? `${e.correct}/${e.n} correct (${Math.round((100 * e.correct) / e.n)}%)` : 'no labelled items'}; parse failures ${e.parseFailures} -> ${file}`);
+      }
+    } finally {
+      await closePool();
+    }
+  });
+
+program
+  .command('approve')
+  .description('Approve a drafted reply by its [id] in the digest. Nothing is posted until `nightshift post <id>`.')
+  .argument('<id>', 'triage id', (v) => Number.parseInt(v, 10))
+  .option('-e, --edit <text>', 'approve your edited text instead of the draft')
+  .option('-s, --skip', 'reject the draft (revokes an earlier approval)')
+  .action(async (id: number, opts: { edit?: string; skip?: boolean }) => {
+    const db = getPool();
+    try {
+      const action = opts.skip ? 'skip' : opts.edit ? 'edit' : 'approve';
+      await recordApproval(db, { triageId: id, action, finalText: opts.edit ?? null, actor: labeller() });
+      console.log(`${action} recorded for ${id}${action === 'skip' ? '' : `. Post it with: nightshift post ${id}`}`);
+    } finally {
+      await closePool();
+    }
+  });
+
+program
+  .command('post')
+  .description('Post an approved reply as a GitHub comment. Own repo only (hard allowlist); refuses without an approval.')
+  .argument('<id>', 'triage id', (v) => Number.parseInt(v, 10))
+  .action(async (id: number) => {
+    const db = getPool();
+    try {
+      const { rows } = await db.query<{ repo: string }>('SELECT i.repo FROM triage t JOIN items i ON i.id = t.item_id WHERE t.id = $1', [id]);
+      if (!rows[0]) throw new Error(`triage ${id} not found`);
+      const url = await postApproved(db, createWriteClient(rows[0].repo), { triageId: id, actor: labeller() });
+      console.log(`posted: ${url}`);
     } finally {
       await closePool();
     }

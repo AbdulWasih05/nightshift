@@ -83,3 +83,9 @@ Not fixed, by choice:
 - The digest is not tied to 02:00. `nightshift schedule --at 13:30 [--tz Asia/Dubai]` sets the daily time (saved to `nightshift.config.json`), `--cron` handles anything else, and `nightshift run` gives an immediate summary. `nightshift schedule --once-in N` fires the scheduled path once, N minutes from now, without changing the daily time; that is how night 1 is tested tonight.
 - Default stays 02:00 in the machine's timezone (Asia/Kolkata on the build laptop).
 - Sentry DSN set; the worker restarted between runs and logs `sentry: on`.
+
+## 2026-10-22 late: compressed schedule, publish Saturday ~19:00 IST (Wasih's call)
+- **Cut:** ElevenLabs, GitHub Action, Entire, Tinker fine-tune, changelog draft, .tech. None is core, and each costs hours we now spend on real nights and the write-up. The post mentions none of them as shipped.
+- **Kept, time-boxed:** dashboard on Render + Auth0 (Token Vault 45 min, otherwise stubbed and logged). TabPFN ~2h, otherwise cut and logged.
+- **Nights:** night 5 (scheduled one-off at 23:01 Thu) and night 6 (Fri). An optional Saturday afternoon run is listed as manual. The post reports exactly the nights in NIGHTS.md.
+- **Reversed the same evening (Wasih):** nothing is cut. ElevenLabs, GitHub Action, Entire, Tinker (its Friday-night 250-label go/no-go rule from the brief still applies) and the changelog draft are back in scope, built after core. .tech stays deferred pending last week's winner. Render deploys from a "Deploy to Render" button (render.yaml blueprint) in the README.
