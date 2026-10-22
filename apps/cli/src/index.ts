@@ -205,8 +205,9 @@ program
   .description('Run a night now through Temporal and wait for it (needs `nightshift worker` running)')
   .option('-r, --repo <owner/name...>', 'limit to these repos')
   .option('-c, --chunk <n>', 'items per triage activity', (v) => Number.parseInt(v, 10))
-  .action(async (opts: { repo?: string[]; chunk?: number }) => {
-    const r = await runNightNow({ repos: opts.repo, chunkSize: opts.chunk });
+  .option('-m, --max <n>', 'cap items per repo for a test run (rest is collected next night)', (v) => Number.parseInt(v, 10))
+  .action(async (opts: { repo?: string[]; chunk?: number; max?: number }) => {
+    const r = await runNightNow({ repos: opts.repo, chunkSize: opts.chunk, maxItemsPerRepo: opts.max });
     console.log(`
 night ${r.nightId}: ${r.status}; collected ${JSON.stringify(r.collected)}; triaged ${r.triaged}, failed ${r.triageFailed}`);
     if (r.failedRepos.length) console.log(`failed repos: ${r.failedRepos.join(', ')}`);
@@ -225,7 +226,8 @@ program
     const db = getPool();
     try {
       const nightId =
-        opts.night ?? (await db.query<{ id: number }>('SELECT max(id) AS id FROM nights')).rows[0]?.id;
+        opts.night ??
+        (await db.query<{ id: number }>("SELECT max(id) AS id FROM nights WHERE status <> 'running'")).rows[0]?.id;
       if (!nightId) throw new Error('no nights yet; run `nightshift run` or wait for the schedule');
       const d = await loadDigest(db, nightId);
       const file = await writeDigest(d, resolve(process.cwd(), 'docs', 'digests'));

@@ -5,12 +5,29 @@ import * as Sentry from '@sentry/node';
 
 let enabled = false;
 
-/** Attribute keys that can carry contributor text. Removed from every span before it is sent. */
-const CONTENT_KEY = /^gen_ai\.(input|output|system_instructions|request\.messages|response\.text|response\.tool_calls|tool\.definitions|prompt|completion)/;
+/**
+ * Allowlist, not denylist: a span attribute reaches Sentry only if its key matches one of these. Anything an
+ * integration adds that could carry contributor text (prompts, structured output, tool args, SQL params, URL
+ * queries with logins) is dropped because it is not on the list.
+ */
+const ALLOWED_ATTR = [
+  /^sentry\./,
+  /^nightshift\.(repo|item|kind|prompt_version|night_id|bucket|model_path|parse_ok|fallbacks|duplicate_candidates|latency_ms)$/,
+  /^gen_ai\.(operation\.name|provider\.name|request\.model|response\.model|agent\.name|request\.temperature|response\.finish_reasons)$/,
+  /^gen_ai\.usage\.(input_tokens|output_tokens|total_tokens)$/,
+  /^(http\.request\.method|http\.response\.status_code|http\.method|http\.status_code|server\.address|server\.port|net\.peer\.name)$/,
+  /^(db\.system|db\.system\.name|db\.operation\.name|db\.collection\.name)$/,
+  /^(otel\.kind|otel\.status_code)$/,
+];
 
+export function allowedAttribute(key: string): boolean {
+  return ALLOWED_ATTR.some((re) => re.test(key));
+}
+
+/** Mutates `data`, removing every attribute not on the allowlist. */
 export function scrubSpanData(data: Record<string, unknown> | undefined): void {
   if (!data) return;
-  for (const k of Object.keys(data)) if (CONTENT_KEY.test(k) || k.startsWith('ai.prompt') || k.startsWith('ai.response')) delete data[k];
+  for (const k of Object.keys(data)) if (!allowedAttribute(k)) delete data[k];
 }
 
 export function initTelemetry(service: string): boolean {
@@ -20,30 +37,48 @@ export function initTelemetry(service: string): boolean {
     dsn,
     tracesSampleRate: 1.0,
     // Nothing that can carry contributor text: no AI inputs/outputs, no HTTP bodies (Ollama requests contain
-    // the prompt), no DB query data (upserts carry issue bodies), no stack-frame variables.
+    // the prompt), no DB query data (upserts carry issue bodies), no URL queries (GitHub search has logins),
+    // no stack-frame variables.
     dataCollection: {
       genAI: { inputs: false, outputs: false },
       httpBodies: [],
       databaseQueryData: false,
+      urlQueryParams: false,
       stackFrameVariables: false,
       userInfo: false,
     },
-    environment: process.env.NIGHTSHIFT_ENV ?? 'laptop',
-    serverName: 'nightshift',
-    initialScope: { tags: { service } },
-    // Second fence behind dataCollection, in case an integration ignores it.
+    // Breadcrumbs collect console lines (logins, error text) and fetch URLs. Drop them all.
+    beforeBreadcrumb: () => null,
+    // Second fence: allowlist every span attribute.
     beforeSendSpan(span) {
       scrubSpanData(span.attributes as Record<string, unknown>);
       return span;
     },
     beforeSendTransaction(event) {
       scrubSpanData(event.contexts?.trace?.data as Record<string, unknown> | undefined);
-      for (const s of event.spans ?? []) scrubSpanData(s.data as Record<string, unknown>);
+      for (const sp of event.spans ?? []) scrubSpanData(sp.data as Record<string, unknown>);
+      delete event.request;
+      delete event.extra;
+      event.breadcrumbs = [];
+      return event;
+    },
+    // Error events (e.g. Mastra's integration capturing an Ollama ECONNREFUSED): keep the type and stack shape,
+    // drop messages, breadcrumbs, request data and extras.
+    beforeSend(event) {
+      event.breadcrumbs = [];
+      delete event.request;
+      delete event.extra;
+      if (event.message) event.message = '[redacted]';
+      for (const ex of event.exception?.values ?? []) ex.value = ex.type ? `${ex.type} (message redacted)` : '[redacted]';
       return event;
     },
   });
   enabled = true;
   return true;
+}
+
+export function telemetryEnabled(): boolean {
+  return enabled;
 }
 
 export async function flushTelemetry(): Promise<void> {
@@ -104,7 +139,7 @@ export async function traceChat<T>(model: { path: string; id: string }, fn: () =
         if (o.tokensIn !== null && o.tokensOut !== null) span.setAttribute('gen_ai.usage.total_tokens', o.tokensIn + o.tokensOut);
         return r;
       } catch (err) {
-        span.setStatus({ code: 2, message: (err as Error).message.slice(0, 200) });
+        span.setStatus({ code: 2, message: (err as Error).name || 'Error' }); // class name only, never the message
         throw err;
       }
     },

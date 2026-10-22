@@ -4,7 +4,7 @@
 import type pg from 'pg';
 import { findDuplicates } from '../duplicates.ts';
 import { embedPending } from '../embed.ts';
-import { ModelHealth, triageItem, type TriageOptions, type TriageRun } from './agent.ts';
+import { ModelHealth, ModelsUnavailableError, triageItem, type TriageOptions, type TriageRun } from './agent.ts';
 import { buildTriageInput } from './input.ts';
 import type { HybridCandidate } from '../duplicates.ts';
 import { saveTriage, type PendingItem } from './store.ts';
@@ -23,6 +23,8 @@ export interface BatchOptions extends TriageOptions {
   repos: string[];
   /** The nightly workflow embeds in its own activity first. */
   skipEmbed?: boolean;
+  /** Stop between items when aborted (Temporal activity cancellation after a heartbeat timeout). */
+  signal?: AbortSignal;
   onItem?: (r: BatchItemResult) => void;
 }
 
@@ -38,6 +40,7 @@ export async function triageBatch(db: pg.Pool, items: PendingItem[], opts: Batch
   const health = opts.health ?? new ModelHealth();
   const results: BatchItemResult[] = [];
   for (const item of items) {
+    if (opts.signal?.aborted) break; // a newer attempt owns this chunk now
     const result: BatchItemResult = { item, run: null, duplicates: [], triageId: null };
     try {
       try {
@@ -61,6 +64,9 @@ export async function triageBatch(db: pg.Pool, items: PendingItem[], opts: Batch
           return run;
         },
       );
+      // No model answered: an outage, not a verdict. Do not store a fake NEEDS_HUMAN; stop the batch so the
+      // caller (Temporal retry with backoff, or the CLI) can wait for Ollama and resume at this item.
+      if (result.run.modelPath === 'none') throw new ModelsUnavailableError(result.run.failures);
       const save = () => saveTriage(db, { itemId: item.id, nightId: opts.nightId, promptVersion: opts.promptVersion, input, run: result.run! });
       try {
         result.triageId = await save();
@@ -68,6 +74,7 @@ export async function triageBatch(db: pg.Pool, items: PendingItem[], opts: Batch
         result.triageId = await save(); // one retry covers a pool reconnect after DB restart / laptop sleep
       }
     } catch (err) {
+      if (err instanceof ModelsUnavailableError) throw err;
       result.error = (err as Error).message.slice(0, 1000);
       try {
         await db.query(

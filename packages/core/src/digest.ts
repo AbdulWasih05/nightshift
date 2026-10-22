@@ -64,11 +64,18 @@ const oneLine = (s: string, max = 110) => {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 };
 
-export function renderDigest(d: DigestData): string {
+/**
+ * The digest file lists every item (the nightly labelling step reads all of them); the terminal summary is
+ * the short version. `cap` limits each list, for the terminal only.
+ */
+export function renderDigest(d: DigestData, opts: { cap?: number } = {}): string {
+  const cap = opts.cap ?? Number.POSITIVE_INFINITY;
   const human = d.rows.filter((r) => r.bucket === 'NEEDS_HUMAN');
   const drafts = d.rows.filter((r) => DRAFT_BUCKETS.includes(r.bucket) && r.draft_reply);
   const trivial = d.rows.filter((r) => r.bucket === 'TRIVIAL_SAFE');
+  const other = d.rows.filter((r) => !human.includes(r) && !drafts.includes(r) && !trivial.includes(r));
   const est = Math.round(human.length * EST_MIN_PER_HUMAN + drafts.length * EST_MIN_PER_DRAFT);
+  const more = (n: number) => (n > cap ? [`- …and ${n - cap} more (full list: \`nightshift digest --all\` or the digest file)`] : []);
 
   const out: string[] = [];
   out.push(`# Nightshift digest · ${d.date} (night ${d.nightId})`);
@@ -79,29 +86,33 @@ export function renderDigest(d: DigestData): string {
   out.push('');
 
   out.push(`## Needs you (${human.length})`);
-  for (const r of human.slice(0, MAX_LISTED)) {
-    out.push(`- ${shortRepo(r.repo)}#${r.number} ${r.kind === 'pr' ? 'PR' : 'issue'} "${oneLine(r.title, 60)}": ${oneLine(r.reason)}`);
+  for (const r of human.slice(0, cap)) {
+    out.push(`- [${r.triage_id}] ${shortRepo(r.repo)}#${r.number} ${r.kind === 'pr' ? 'PR' : 'issue'} "${oneLine(r.title, 60)}": ${oneLine(r.reason)}`);
   }
-  if (human.length > MAX_LISTED) out.push(`- …and ${human.length - MAX_LISTED} more (\`nightshift digest --all\`)`);
-  out.push('');
+  out.push(...more(human.length), '');
 
   out.push(`## Drafted replies (${drafts.length}): \`nightshift approve <id>\``);
-  for (const r of drafts.slice(0, MAX_LISTED)) {
+  for (const r of drafts.slice(0, cap)) {
     out.push(`- [${r.triage_id}] ${shortRepo(r.repo)}#${r.number} ${r.bucket}: "${oneLine(r.draft_reply!, 90)}"`);
   }
-  if (drafts.length > MAX_LISTED) out.push(`- …and ${drafts.length - MAX_LISTED} more`);
-  out.push('');
+  out.push(...more(drafts.length), '');
 
   if (trivial.length) {
     out.push(`## Trivial and safe (${trivial.length})`);
-    out.push(trivial.map((r) => `${shortRepo(r.repo)}#${r.number}`).join(', '));
+    out.push(trivial.slice(0, cap).map((r) => `${shortRepo(r.repo)}#${r.number}`).join(', ') + (trivial.length > cap ? ', …' : ''));
     out.push('');
+  }
+
+  if (other.length) {
+    out.push(`## Classified, no draft (${other.length})`);
+    for (const r of other.slice(0, cap)) out.push(`- [${r.triage_id}] ${shortRepo(r.repo)}#${r.number} ${r.bucket}: ${oneLine(r.reason)}`);
+    out.push(...more(other.length), '');
   }
 
   if (d.errors.length) {
     out.push(`## Could not process (${d.errors.length})`);
-    for (const e of d.errors.slice(0, 5)) out.push(`- ${shortRepo(e.repo)}#${e.number} (${e.stage}): ${oneLine(e.error, 80)}`);
-    out.push('');
+    for (const e of d.errors.slice(0, cap)) out.push(`- ${shortRepo(e.repo)}#${e.number} (${e.stage}): ${oneLine(e.error, 80)}`);
+    out.push(...more(d.errors.length), '');
   }
 
   const byBucket = countBy(d.rows, (r) => r.bucket);
@@ -109,26 +120,30 @@ export function renderDigest(d: DigestData): string {
   const lat = d.rows.map((r) => r.latency_ms).filter((x): x is number => x !== null);
   const tokIn = sum(d.rows.map((r) => r.tokens_in ?? 0));
   const tokOut = sum(d.rows.map((r) => r.tokens_out ?? 0));
+  const hosted = byModel.hosted ?? 0;
   out.push('<details><summary>Night stats</summary>');
   out.push('');
-  out.push(`- Items triaged: ${d.rows.length} (${Object.entries(countBy(d.rows, (r) => shortRepo(r.repo))).map(([k, v]) => `${k} ${v}`).join(', ')})`);
-  out.push(`- Buckets: ${Object.entries(byBucket).map(([k, v]) => `${k} ${v}`).join(', ')}`);
-  out.push(`- Model path: ${Object.entries(byModel).map(([k, v]) => `${k} ${v}`).join(', ')}; parse failures ${d.rows.filter((r) => !r.parse_ok).length}`);
-  if (lat.length) out.push(`- Latency: median ${(median(lat) / 1000).toFixed(1)}s per item; tokens ${tokIn} in / ${tokOut} out; cost $0.00 (local)`);
+  out.push(`- Items triaged: ${d.rows.length} (${Object.entries(countBy(d.rows, (r) => shortRepo(r.repo))).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'})`);
+  out.push(`- Buckets: ${Object.entries(byBucket).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`);
+  out.push(`- Model path: ${Object.entries(byModel).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}; parse failures ${d.rows.filter((r) => !r.parse_ok).length}`);
+  if (lat.length) out.push(`- Latency: median ${(median(lat) / 1000).toFixed(1)}s per item; tokens ${tokIn} in / ${tokOut} out`);
+  out.push(hosted ? `- Model calls: ${d.rows.length - hosted} local ($0.00), ${hosted} on the hosted fallback` : `- Model calls: all local, $0.00`);
+  out.push(`- "est." time assumes ${EST_MIN_PER_HUMAN} min per item that needs you and ${EST_MIN_PER_DRAFT} min per draft. It is an estimate, not a measurement.`);
   out.push('');
   out.push('</details>');
   return out.join('\n') + '\n';
 }
 
-/** Short terminal version: the two headline lines plus the "needs you" list. */
+/** Short terminal version: the two headline lines plus the first few "needs you" items. */
 export function renderTerminalSummary(d: DigestData): string {
-  const md = renderDigest(d);
+  const md = renderDigest(d, { cap: MAX_LISTED });
   return md.slice(0, md.indexOf('## Drafted replies')).replace(/\*\*/g, '').trimEnd();
 }
 
 export async function writeDigest(d: DigestData, dir: string): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const file = join(dir, `${d.date}.md`);
+  // One file per night: two nights on one date (Sunday's 02:00 run and the afternoon run) must not overwrite.
+  const file = join(dir, `${d.date}-night${d.nightId}.md`);
   await writeFile(file, renderDigest(d), 'utf8');
   return file;
 }

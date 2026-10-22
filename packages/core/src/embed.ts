@@ -44,7 +44,7 @@ export const toVectorLiteral = (v: number[]) => `[${v.join(',')}]`;
 /** Embed every item in these repos whose text changed since it was last embedded. Returns the count embedded. */
 export async function embedPending(
   db: pg.Pool,
-  opts: { repos: string[]; embed?: EmbedFn; model?: string; limit?: number },
+  opts: { repos: string[]; embed?: EmbedFn; model?: string; limit?: number; onProgress?: (done: number) => void; signal?: AbortSignal },
 ): Promise<number> {
   const model = opts.model ?? process.env.EMBED_MODEL ?? 'nomic-embed-text';
   const embed = opts.embed ?? ollamaEmbedder(undefined, model);
@@ -75,6 +75,8 @@ export async function embedPending(
     done++;
   };
   for (let i = 0; i < todo.length; i += BATCH) {
+    opts.signal?.throwIfAborted();
+    opts.onProgress?.(done);
     const batch = todo.slice(i, i + BATCH);
     try {
       const vectors = await embed(batch.map((b) => b.text));

@@ -17,6 +17,7 @@ interface NightRow {
   prompt_version: string | null;
   notes: string | null;
   triaged: string;
+  new_items: string;
   parse_fail: string;
   median_ms: number | null;
   tokens_in: string | null;
@@ -35,6 +36,8 @@ try {
     await db.query<NightRow>(`
       SELECT n.*,
         (SELECT count(*) FROM triage t WHERE t.night_id = n.id) AS triaged,
+        (SELECT count(*) FROM triage t WHERE t.night_id = n.id
+           AND NOT EXISTS (SELECT 1 FROM triage p WHERE p.item_id = t.item_id AND p.night_id < n.id)) AS new_items,
         (SELECT count(*) FROM triage t WHERE t.night_id = n.id AND NOT t.parse_ok) AS parse_fail,
         (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) FROM triage t WHERE t.night_id = n.id) AS median_ms,
         (SELECT sum(tokens_in) FROM triage t WHERE t.night_id = n.id) AS tokens_in,
@@ -79,17 +82,31 @@ try {
   out.push('');
   out.push('Accuracy is measured only on items a human labelled (`labels_human`). "n/a" means no data yet, not zero.');
   out.push('');
-  out.push('| Night | Started | Trigger | Status | Duration | Triaged | Parse fails | Median latency | Tokens in/out | Labelled | Correct | Drafts approved / edited / skipped / posted | Errors |');
-  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
-  for (const n of nights) {
+  const header =
+    '| Night | Started | Status | Duration | Triaged (first time) | Parse fails | Median latency | Tokens in/out | Labelled | Correct | Drafts approved / edited / skipped / posted | Errors |';
+  const rule = '|---|---|---|---|---|---|---|---|---|---|---|---|';
+  const row = (n: NightRow) => {
     const labelled = Number(n.labelled);
-    out.push(
-      `| ${n.id} | ${fmtDate(n.started_at)} | ${n.trigger} | ${n.status} | ${dur(n.started_at, n.finished_at)} | ${n.triaged} | ${n.parse_fail} | ` +
-        `${n.median_ms === null ? 'n/a' : `${(Number(n.median_ms) / 1000).toFixed(1)}s`} | ${n.tokens_in ?? 0} / ${n.tokens_out ?? 0} | ` +
-        `${labelled || 'n/a'} | ${labelled ? `${n.correct} (${Math.round((100 * Number(n.correct)) / labelled)}%)` : 'n/a'} | ` +
-        `${na(n.approved)} / ${na(n.edited)} / ${na(n.skipped)} / ${na(n.posted)} | ${n.errors} |`,
+    return (
+      `| ${n.id} | ${fmtDate(n.started_at)} | ${n.status} | ${dur(n.started_at, n.finished_at)} | ${n.triaged} (${n.new_items}) | ${n.parse_fail} | ` +
+      `${n.median_ms === null ? 'n/a' : `${(Number(n.median_ms) / 1000).toFixed(1)}s`} | ${n.tokens_in ?? 0} / ${n.tokens_out ?? 0} | ` +
+      `${labelled || 'n/a'} | ${labelled ? `${n.correct} (${Math.round((100 * Number(n.correct)) / labelled)}%)` : 'n/a'} | ` +
+      `${na(n.approved)} / ${na(n.edited)} / ${na(n.skipped)} / ${na(n.posted)} | ${n.errors} |`
     );
-  }
+  };
+  const scheduled = nights.filter((n) => n.trigger === 'scheduled');
+  const manual = nights.filter((n) => n.trigger === 'manual');
+  out.push('## Scheduled nights (02:00 runs)');
+  out.push('');
+  if (scheduled.length) out.push(header, rule, ...scheduled.map(row));
+  else out.push('None yet.');
+  out.push('');
+  out.push('## Manual runs (smoke tests, test runs; listed separately, not counted as nights)');
+  out.push('');
+  if (manual.length) out.push(header, rule, ...manual.map(row));
+  else out.push('None.');
+  out.push('');
+  out.push('"Triaged (first time)": items triaged that night, and in brackets how many had never been triaged before (busy items are re-triaged when they change).');
   out.push('');
   for (const n of nights) {
     out.push(`## Night ${n.id} (${n.trigger}, prompt ${n.prompt_version ?? '?'})`);
@@ -98,7 +115,8 @@ try {
     out.push(`- Triaged per repo: ${list(perRepo, n.id, (r) => r.repo)}`);
     out.push(`- Buckets: ${list(buckets, n.id, (r) => r.bucket)}`);
     out.push(`- Model path: ${list(models, n.id, (r) => r.model_path)}`);
-    out.push(`- Cost: $0.00 (local models only)${models.some((m) => m.night_id === n.id && m.model_path === 'hosted') ? '; hosted calls listed above' : ''}`);
+    const hosted = Number(models.find((m) => m.night_id === n.id && m.model_path === 'hosted')?.n ?? 0);
+    out.push(hosted ? `- Model calls: ${hosted} on the hosted fallback (not $0.00); the rest local` : '- Model calls: all local, $0.00');
     if (n.notes) out.push(`- Notes: ${n.notes.split('\n').join('; ')}`);
     out.push('');
   }

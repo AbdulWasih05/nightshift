@@ -56,3 +56,25 @@ Fixed:
 Not fixed, by choice:
 - **SPAM_OR_SLOP "two tells" counts evidence items, not independent tells.** Revisit with night-1 data; there are no spam examples yet.
 - **Bug found in the latency check: backfill hid items from the collector.** The collector skips items it already holds at the same `updated_at`, and backfilled corpus rows counted as already held. timescaledb collected 5 of 27 items updated in 26h; the other 22 would never have been triaged. Corpus-only rows now never count as unchanged. A DB test covers it, and a re-collect gives 27/27.
+
+### Builder-review of unit 4+5+9: workflow, digest, Sentry (2026-10-22)
+Fixed:
+- **Blocker: items outside a night were never triaged.** A night only triaged what its own collect stamped: the 69 items collected by the CLI today, and anything left over by a partial night, were lost. New `claimBacklog` step after collect: claims every open, non-corpus item that has no triage row (current prompt) newer than its last collection.
+- **Blocker: an Ollama outage was recorded as verdicts.** Every model failed fast, the item was saved as NEEDS_HUMAN with `model_path='none'`, the chunk "succeeded", and the night reported `ok`. Now `ModelsUnavailableError` stores nothing and fails the activity, so Temporal backs off (1 min doubling to 10 min, 10 attempts) and resumes at that item. The breaker half-opens after 5 minutes instead of staying open all night.
+- **Stale attempts after laptop sleep.** collect, embed and triage now heartbeat and honour `cancellationSignal`; a cancelled collect can never write the cursor.
+- **A night could end with no row, or stuck in `running`.** DB-only steps retry without an attempt limit for up to 3 hours. Everything after `startNight` is in try/finally, so the digest and `finishNight` always run. Found while testing this: the TS SDK rejects `maximumAttempts: 0`; omitting it means unlimited.
+- **Repos are collected one at a time** (they share one GitHub search budget). PRs whose enrichment failed are retried next night instead of being stuck un-enriched.
+- **Digest:** one file per night (`<date>-night<id>.md`). The file lists every item, every bucket included; only the terminal summary is shortened. The "est." line states its assumptions. The cost line counts hosted calls instead of always printing $0.00.
+- **Sentry privacy is now an allowlist**, not a denylist: only named metadata attributes leave the laptop. Breadcrumbs are dropped, URL query strings are off (GitHub search URLs contain logins), and error events keep the exception type only. A unit test asserts that prompt, structured-output, URL-query and SQL attributes are removed.
+- **Trigger** comes from Temporal's `TemporalScheduledById` search attribute, not a workflow-id prefix (the TS client's id is `<scheduleId>-workflow-<ts>`).
+- **NIGHTS.md** separates scheduled nights from manual runs, and shows "first time" item counts so busy items re-triaged across nights are not double-counted.
+- **night-stack.ps1:** probes 127.0.0.1, waits up to 60s for the port, and checks that the worker reached "polling" (with a 15s grace for the cmd→pnpm→tsx→node chain).
+
+Not fixed, by choice:
+- **No keep-awake in code**; it needs admin (`powercfg /requestsoverride`). The launcher prints the instruction. If the laptop sleeps past the schedule's 6h catch-up window, the night is skipped, and that will show as a missing night in NIGHTS.md.
+
+### Incident: test night 3 ran uncapped (2026-10-22, ~10:37 IST)
+- Intended: a manual night on mastra capped at 4 items (`--max 4`).
+- What happened: `TaskStop` on the backgrounded `pnpm nightshift worker` killed the pnpm wrapper, not its node child. The old worker (code without `--max`) kept polling and picked up the workflow, queuing 200 items at ~100-160s each, which would have run into the 02:00 night.
+- Action: terminated the workflow after 9 items, marked night 3 `failed` with this note in the DB, and killed both worker processes. The 191 untriaged items carry over through `claimBacklog`.
+- Prevention: workers are started only through `scripts/night-stack.ps1`, which detects any running worker process chain.

@@ -33,3 +33,21 @@ export async function countPendingForNight(db: pg.Pool, nightId: number, promptV
   );
   return Number(rows[0]!.n);
 }
+
+/**
+ * Pull the backlog into this night: open items that have no triage row (for this prompt) newer than their last
+ * collection. Covers items collected outside a night (manual CLI) and leftovers of a partial or killed night,
+ * which the night's own collect would otherwise never see again. Returns how many were claimed.
+ */
+export async function claimBacklog(db: pg.Pool, nightId: number, repos: string[], promptVersion: string): Promise<number> {
+  const { rowCount } = await db.query(
+    `UPDATE items i SET last_seen_night = $1
+      WHERE i.repo = ANY($2) AND i.state = 'open' AND NOT i.corpus_only
+        AND i.last_seen_night IS DISTINCT FROM $1
+        AND NOT EXISTS (
+          SELECT 1 FROM triage t
+           WHERE t.item_id = i.id AND t.prompt_version = $3 AND t.created_at >= i.collected_at)`,
+    [nightId, repos, promptVersion],
+  );
+  return rowCount ?? 0;
+}

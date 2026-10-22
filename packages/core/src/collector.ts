@@ -21,6 +21,10 @@ export interface CollectOptions {
    * cursor and never assign a night, so backfilled items do not enter the triage queue.
    */
   corpusOnly?: boolean;
+  /** Aborted when Temporal cancels this attempt (heartbeat timeout after sleep): stop, and never write the cursor. */
+  signal?: AbortSignal;
+  /** Called per page and per item; the activity heartbeats from here. */
+  onProgress?: (done: number) => void;
 }
 
 export interface CollectError {
@@ -53,9 +57,12 @@ export async function collectRepo(gh: GitHub, db: pg.Pool, opts: CollectOptions)
   const scan = await scanSince<GhIssue>({
     since,
     max: opts.maxItems,
-    fetchPage: async (s, page) =>
-      (await gh.issues.listForRepo({ owner, repo, state: 'all', since: s, sort: 'updated', direction: 'asc', per_page: PAGE_SIZE, page }))
-        .data as GhIssue[],
+    fetchPage: async (s, page) => {
+      opts.signal?.throwIfAborted();
+      opts.onProgress?.(0);
+      return (await gh.issues.listForRepo({ owner, repo, state: 'all', since: s, sort: 'updated', direction: 'asc', per_page: PAGE_SIZE, page }))
+        .data as GhIssue[];
+    },
     unchanged: (issues) => unchangedNumbers(db, opts.repo, issues),
   });
 
@@ -83,7 +90,10 @@ export async function collectRepo(gh: GitHub, db: pg.Pool, opts: CollectOptions)
       issues: items.filter((i) => i.kind === 'issue').length, capped: scan.capped, newCursor: scan.cursor, errors,
     };
   }
+  let enriched = 0;
   await mapLimit(scan.changed, ENRICH_CONCURRENCY, async (issue) => {
+    opts.signal?.throwIfAborted();
+    opts.onProgress?.(++enriched);
     const login = issue.user?.login ?? 'ghost';
     let pr: PrDetails | null = null;
     let author: AuthorFacts = { accountAgeDays: null, priorMerged: null };
@@ -102,6 +112,7 @@ export async function collectRepo(gh: GitHub, db: pg.Pool, opts: CollectOptions)
     items.push(mapIssue(opts.repo, issue, pr, author));
   });
 
+  opts.signal?.throwIfAborted();
   for (const item of items) {
     try {
       await upsertItem(db, item, opts.nightId);
@@ -117,6 +128,7 @@ export async function collectRepo(gh: GitHub, db: pg.Pool, opts: CollectOptions)
     );
   }
 
+  opts.signal?.throwIfAborted(); // a stale attempt must never move the cursor
   await db.query(
     `INSERT INTO sync_state (repo, last_since) VALUES ($1, $2)
      ON CONFLICT (repo) DO UPDATE SET last_since = EXCLUDED.last_since, updated_at = now()`,
@@ -145,7 +157,9 @@ export async function unchangedNumbers(db: pg.Pool, repo: string, issues: GhIssu
   if (issues.length === 0) return new Set();
   const { rows } = await db.query<{ number: number; updated_at: Date }>(
     // Corpus-only (backfilled) rows never count as unchanged: the real collector must still enrich and queue them.
-    'SELECT number, updated_at FROM items WHERE repo = $1 AND number = ANY($2::int[]) AND NOT corpus_only',
+    // Nor do PRs whose enrichment failed last time (no diff stats): they are retried until enriched.
+    `SELECT number, updated_at FROM items
+      WHERE repo = $1 AND number = ANY($2::int[]) AND NOT corpus_only AND (kind = 'issue' OR additions IS NOT NULL)`,
     [repo, issues.map((i) => i.number)],
   );
   const stored = new Map(rows.map((r) => [r.number, r.updated_at.getTime()]));

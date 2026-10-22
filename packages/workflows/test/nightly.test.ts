@@ -27,6 +27,7 @@ function mocks(state: { chunkCalls: number; triaged: number; finished?: { status
       if (repo === 'b/down') throw new Error('GitHub 502');
       return { repo, collected: total, capped: false, errors: 0 };
     },
+    claimBacklog: async () => 0,
     embed: async () => total,
     triageChunk: async ({ size }) => {
       state.chunkCalls++;
@@ -48,6 +49,24 @@ function mocks(state: { chunkCalls: number; triaged: number; finished?: { status
 }
 
 describe('nightlyTriage', () => {
+  it('a crash after startNight still writes the digest and marks the night failed', async () => {
+    const state = { chunkCalls: 0, triaged: 0, digest: false } as Parameters<typeof mocks>[0];
+    const a = mocks(state);
+    a.claimBacklog = async () => {
+      throw new Error('relation "items" does not exist');
+    };
+    const worker = await Worker.create({ connection: env.nativeConnection, taskQueue: 'test3', workflowsPath, activities: a });
+    await worker.runUntil(async () => {
+      // claimBacklog is on the DB proxy (retries until scheduleToClose); time-skipping fast-forwards the 3h budget.
+      await expect(
+        env.client.workflow.execute(nightlyTriage, { taskQueue: 'test3', workflowId: 'night-test-3', args: [{}] }),
+      ).rejects.toThrow();
+    });
+    expect(state.digest).toBe(true);
+    expect(state.finished?.status).toBe('failed');
+    expect(state.finished?.notes).toMatch(/night crashed/);
+  }, 180_000);
+
   it('retries a failing triage chunk, isolates a dead repo, still writes the digest, and replays deterministically', async () => {
     const state = { chunkCalls: 0, triaged: 0, digest: false } as Parameters<typeof mocks>[0];
     const worker = await Worker.create({

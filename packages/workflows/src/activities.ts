@@ -1,7 +1,10 @@
 // Temporal activities: thin wrappers over @nightshift/core. All I/O lives here; the workflow only orchestrates.
+// Long activities heartbeat and honour cancellation, so after laptop sleep a stale attempt stops instead of
+// racing its retry on the same items.
 import { resolve } from 'node:path';
-import { Context } from '@temporalio/activity';
+import { ApplicationFailure, Context } from '@temporalio/activity';
 import {
+  claimBacklog as claimBacklogRows,
   collectRepo,
   countPendingForNight,
   createReadClient,
@@ -11,6 +14,7 @@ import {
   loadConfig,
   loadDigest,
   ModelHealth,
+  ModelsUnavailableError,
   renderTerminalSummary,
   selectPending,
   startNight as startNightRow,
@@ -18,7 +22,6 @@ import {
   writeDigest as writeDigestFile,
   type NightStatus,
 } from '@nightshift/core';
-import { SCHEDULE_ID } from './client.ts';
 
 export interface NightConfig {
   repos: string[];
@@ -37,11 +40,9 @@ export async function loadNightConfig(): Promise<NightConfig> {
   };
 }
 
-export async function startNight(args: { repos: string[]; promptVersion: string }): Promise<number> {
-  const exec = Context.current().info.workflowExecution;
-  // Schedule-started workflows get ids "<scheduleId>-<timestamp>".
-  const trigger = exec?.workflowId.startsWith(`${SCHEDULE_ID}-`) ? 'scheduled' : 'manual';
-  return startNightRow(getPool(), args.repos, args.promptVersion, exec?.runId ?? null, trigger);
+export async function startNight(args: { repos: string[]; promptVersion: string; trigger: 'scheduled' | 'manual' }): Promise<number> {
+  const runId = Context.current().info.workflowExecution?.runId ?? null;
+  return startNightRow(getPool(), args.repos, args.promptVersion, runId, args.trigger);
 }
 
 export interface CollectSummary {
@@ -52,20 +53,28 @@ export interface CollectSummary {
 }
 
 export async function collect(args: { repo: string; nightId: number; maxItems: number; initialLookbackHours: number }): Promise<CollectSummary> {
+  const ctx = Context.current();
   const r = await collectRepo(createReadClient(), getPool(), {
     repo: args.repo,
     nightId: args.nightId,
     maxItems: args.maxItems,
     initialLookbackHours: args.initialLookbackHours,
+    signal: ctx.cancellationSignal,
+    onProgress: (done) => ctx.heartbeat({ repo: args.repo, done }),
   });
   return { repo: r.repo, collected: r.collected, capped: r.capped, errors: r.errors.length };
 }
 
-export async function embed(args: { repos: string[] }): Promise<number> {
-  return embedPending(getPool(), { repos: args.repos });
+export async function claimBacklog(args: { nightId: number; repos: string[]; promptVersion: string }): Promise<number> {
+  return claimBacklogRows(getPool(), args.nightId, args.repos, args.promptVersion);
 }
 
-// One breaker per worker process and night: a wedged Ollama trips it once, not once per chunk.
+export async function embed(args: { repos: string[] }): Promise<number> {
+  const ctx = Context.current();
+  return embedPending(getPool(), { repos: args.repos, signal: ctx.cancellationSignal, onProgress: (done) => ctx.heartbeat({ done }) });
+}
+
+// One breaker per worker process and night. It half-opens after 5 minutes, so an Ollama restart costs minutes.
 const healthByNight = new Map<number, ModelHealth>();
 
 export interface ChunkResult {
@@ -76,7 +85,8 @@ export interface ChunkResult {
 
 /**
  * Triage up to `size` pending items for this night. Resumable by construction: items with a triage row for
- * this night are skipped, so a retry after Ollama restarts or laptop sleep continues where it stopped.
+ * this night are skipped, so a retry after an Ollama restart or laptop sleep continues where it stopped.
+ * If no model answers, nothing is stored and the activity fails, so Temporal backs off and retries.
  */
 export async function triageChunk(args: { nightId: number; repos: string[]; promptVersion: string; size: number }): Promise<ChunkResult> {
   const db = getPool();
@@ -85,18 +95,28 @@ export async function triageChunk(args: { nightId: number; repos: string[]; prom
   const pending = await selectPending(db, { repos: args.repos, promptVersion: args.promptVersion, nightId: args.nightId, limit: args.size });
   let processed = 0;
   let failed = 0;
-  await triageBatch(db, pending, {
-    promptVersion: args.promptVersion,
-    nightId: args.nightId,
-    repos: args.repos,
-    health: healthByNight.get(args.nightId),
-    skipEmbed: true,
-    onItem: (r) => {
-      if (r.triageId) processed++;
-      else failed++;
-      ctx.heartbeat({ done: processed + failed, of: pending.length });
-    },
-  });
+  try {
+    await triageBatch(db, pending, {
+      promptVersion: args.promptVersion,
+      nightId: args.nightId,
+      repos: args.repos,
+      health: healthByNight.get(args.nightId),
+      skipEmbed: true,
+      signal: ctx.cancellationSignal,
+      onItem: (r) => {
+        if (r.triageId) processed++;
+        else failed++;
+        ctx.heartbeat({ done: processed + failed, of: pending.length });
+      },
+    });
+  } catch (err) {
+    if (err instanceof ModelsUnavailableError) {
+      // Retryable on purpose: the workflow's retry policy backs off (1 min doubling to 10 min) until Ollama is back.
+      throw ApplicationFailure.retryable(err.message, 'ModelsUnavailable');
+    }
+    throw err;
+  }
+  ctx.cancellationSignal.throwIfAborted();
   return { processed, failed, remaining: await countPendingForNight(db, args.nightId, args.promptVersion) };
 }
 

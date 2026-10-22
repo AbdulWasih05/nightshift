@@ -9,7 +9,9 @@ import { initTelemetry } from '@nightshift/core';
 import { TASK_QUEUE } from './client.ts';
 
 export async function runWorker(): Promise<void> {
-  initTelemetry('worker');
+  const sentry = initTelemetry('worker');
+  // Preflight reads this line from ~/.nightshift/worker.out.log: the worker's env, not the shell's, is what counts.
+  console.log(`[worker] sentry: ${sentry ? 'on' : 'off'}`);
   const connection = await NativeConnection.connect({ address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233' });
   const worker = await Worker.create({
     connection,

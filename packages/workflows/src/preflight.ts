@@ -1,5 +1,6 @@
 // Checks CLAUDE.md requires before every nightly run. Prints one line per check; returns false on any hard failure.
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Client, Connection } from '@temporalio/client';
@@ -100,8 +101,15 @@ export async function preflight(root = process.cwd()): Promise<boolean> {
 
   checks.push(
     await check('Sentry tracing', false, async () => {
-      if (!process.env.SENTRY_DSN) throw new Error('SENTRY_DSN not set: tonight will have no traces');
-      return 'DSN set; metadata-only spans (no prompt or contributor text)';
+      if (!process.env.SENTRY_DSN) throw new Error('SENTRY_DSN not set in .env: tonight will have no traces');
+      // The worker reads its env at start; a DSN added later needs a worker restart (between nights only).
+      const log = join(homedir(), '.nightshift', 'worker.out.log');
+      if (existsSync(log)) {
+        const lines = (await readFile(log, 'utf8')).split(/\r?\n/).filter((l) => l.includes('[worker] sentry:'));
+        const last = lines.at(-1);
+        if (last?.includes('off')) throw new Error('DSN is in .env but the running worker started without it: restart the worker');
+      }
+      return 'DSN set; metadata-only spans (allowlisted attributes, no contributor text)';
     }),
   );
 
