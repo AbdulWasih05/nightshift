@@ -36,8 +36,8 @@ if (-not (Get-Worker)) {
   $log = Join-Path $dir 'worker.out.log'
   while (-not ((Test-Path $log) -and (Select-String -Path $log -Pattern 'polling task queue' -Quiet))) {
     $elapsed = ((Get-Date) - $started).TotalSeconds
-    # Give the process chain 15s to appear before treating "no process" as a crash; 90s overall.
-    if (($elapsed -gt 15 -and -not (Get-Worker)) -or $elapsed -gt 90) { throw 'worker did not start; see ~/.nightshift/worker.err.log' }
+    # Give the process chain 15s to appear before treating "no process" as a crash; 240s overall (bundling is slow under memory pressure).
+    if (($elapsed -gt 15 -and -not (Get-Worker)) -or $elapsed -gt 240) { throw 'worker did not start; see ~/.nightshift/worker.err.log' }
     Start-Sleep -Seconds 3
   }
   Select-String -Path $log -Pattern '\[worker\] sentry:' | Select-Object -Last 1 | ForEach-Object { Write-Host $_.Line }

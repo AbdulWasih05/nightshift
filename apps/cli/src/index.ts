@@ -2,7 +2,7 @@
 import 'dotenv/config';
 import { resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
-import { describeSchedule, preflight, runNightNow, runWorker, SCHEDULE_ID, upsertSchedule } from '@nightshift/workflows';
+import { describeSchedule, ONCE_SCHEDULE_ID, preflight, runNightNow, runWorker, SCHEDULE_ID, scheduleOnce, upsertSchedule } from '@nightshift/workflows';
 import {
   closePool,
   collectRepo,
@@ -10,8 +10,11 @@ import {
   embedPending,
   findDuplicates,
   getPool,
+  cronFromTime,
+  isValidTimezone,
   loadConfig,
   loadDigest,
+  saveSchedule,
   renderDigest,
   renderTerminalSummary,
   writeDigest,
@@ -181,12 +184,33 @@ program
 
 program
   .command('schedule')
-  .description('Create or update the nightly Temporal schedule from nightshift.config.json, and show the next runs')
-  .action(async () => {
-    const { schedule } = loadConfig();
-    console.log(`${await upsertSchedule(schedule)} schedule "${SCHEDULE_ID}": ${schedule.cron} (${schedule.timezone})`);
+  .description('Show or change when the nightly run fires. The run time is yours: 02:00, midday, or once in N minutes.')
+  .option('--at <HH:MM>', 'daily run time, 24h, e.g. 02:00 or 13:30')
+  .option('--cron <expr>', 'full cron expression instead of --at, e.g. "0 2,13 * * 1-5"')
+  .option('--tz <iana>', 'timezone, e.g. Asia/Kolkata, Asia/Dubai, Europe/Berlin (default: config, else this machine)')
+  .option('--once-in <minutes>', 'additionally fire the scheduled run once, N minutes from now (does not change the daily time)', (v) => {
+    const n = Number.parseInt(v, 10);
+    if (!Number.isInteger(n) || n < 1 || n > 1440) throw new InvalidArgumentError(`minutes 1-1440: ${v}`);
+    return n;
+  })
+  .action(async (opts: { at?: string; cron?: string; tz?: string; onceIn?: number }) => {
+    if (opts.at && opts.cron) throw new InvalidArgumentError('use --at or --cron, not both');
+    if (opts.tz && !isValidTimezone(opts.tz)) throw new InvalidArgumentError(`unknown timezone: ${opts.tz}`);
+    const current = loadConfig().schedule;
+    const schedule = {
+      cron: opts.cron ?? (opts.at ? cronFromTime(opts.at) : current.cron),
+      timezone: opts.tz ?? current.timezone,
+    };
+    if (schedule.cron !== current.cron || schedule.timezone !== current.timezone) saveSchedule(schedule);
+    console.log(`${await upsertSchedule(schedule)} daily schedule "${SCHEDULE_ID}": ${schedule.cron} (${schedule.timezone})`);
     const d = await describeSchedule();
-    console.log(`next runs: ${d?.next.map((t) => t.toString()).join(' | ')}${d?.paused ? ' [PAUSED]' : ''}`);
+    console.log(`next daily runs: ${d?.next.slice(0, 3).map((t) => t.toString()).join(' | ')}${d?.paused ? ' [PAUSED]' : ''}`);
+    if (opts.onceIn) {
+      const at = new Date(Date.now() + opts.onceIn * 60_000);
+      at.setSeconds(0, 0);
+      await scheduleOnce(at);
+      console.log(`one-off scheduled run at ${at.toString()} ("${ONCE_SCHEDULE_ID}", fires once)`);
+    }
   });
 
 program

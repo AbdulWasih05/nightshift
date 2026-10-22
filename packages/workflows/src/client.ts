@@ -3,6 +3,8 @@ import { nightlyTriage, type NightlyInput, type NightlyResult } from './workflow
 
 export const TASK_QUEUE = process.env.TEMPORAL_TASK_QUEUE ?? 'nightshift';
 export const SCHEDULE_ID = 'nightshift-nightly';
+/** One-shot schedule for "run the scheduled path once at HH:MM" (tests, or an extra midday run). */
+export const ONCE_SCHEDULE_ID = 'nightshift-once';
 
 async function client(): Promise<Client> {
   const connection = await Connection.connect({ address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233' });
@@ -51,10 +53,45 @@ export async function upsertSchedule(opts: { cron: string; timezone: string }): 
   }
 }
 
-export async function describeSchedule(): Promise<{ next: Date[]; paused: boolean } | null> {
+/**
+ * Fire the scheduled path exactly once at `at` (replaces any pending one-shot). It runs through a real Temporal
+ * Schedule, so the night is recorded as 'scheduled', the same as the daily run.
+ */
+export async function scheduleOnce(at: Date): Promise<void> {
   const c = await client();
   try {
-    const d = await c.schedule.getHandle(SCHEDULE_ID).describe();
+    try {
+      await c.schedule.getHandle(ONCE_SCHEDULE_ID).delete();
+    } catch (err) {
+      if (!(err instanceof ScheduleNotFoundError)) throw err;
+    }
+    await c.schedule.create({
+      scheduleId: ONCE_SCHEDULE_ID,
+      spec: {
+        calendars: [
+          {
+            year: at.getUTCFullYear(),
+            month: (['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'] as const)[at.getUTCMonth()]!,
+            dayOfMonth: at.getUTCDate(),
+            hour: at.getUTCHours(),
+            minute: at.getUTCMinutes(),
+          },
+        ],
+        timezone: 'UTC',
+      },
+      action: { type: 'startWorkflow', workflowType: nightlyTriage, taskQueue: TASK_QUEUE, args: [{}] as [NightlyInput] },
+      policies: { overlap: ScheduleOverlapPolicy.SKIP, catchupWindow: '1 hour' },
+      state: { remainingActions: 1 },
+    });
+  } finally {
+    await c.connection.close();
+  }
+}
+
+export async function describeSchedule(id = SCHEDULE_ID): Promise<{ next: Date[]; paused: boolean } | null> {
+  const c = await client();
+  try {
+    const d = await c.schedule.getHandle(id).describe();
     return { next: d.info.nextActionTimes, paused: d.state.paused };
   } catch (err) {
     if (err instanceof ScheduleNotFoundError) return null;

@@ -78,3 +78,8 @@ Not fixed, by choice:
 - What happened: `TaskStop` on the backgrounded `pnpm nightshift worker` killed the pnpm wrapper, not its node child. The old worker (code without `--max`) kept polling and picked up the workflow, queuing 200 items at ~100-160s each, which would have run into the 02:00 night.
 - Action: terminated the workflow after 9 items, marked night 3 `failed` with this note in the DB, and killed both worker processes. The 191 untriaged items carry over through `claimBacklog`.
 - Prevention: workers are started only through `scripts/night-stack.ps1`, which detects any running worker process chain.
+
+### Run time is the user's choice (2026-10-22, Wasih's call)
+- The digest is not tied to 02:00. `nightshift schedule --at 13:30 [--tz Asia/Dubai]` sets the daily time (saved to `nightshift.config.json`), `--cron` handles anything else, and `nightshift run` gives an immediate summary. `nightshift schedule --once-in N` fires the scheduled path once, N minutes from now, without changing the daily time; that is how night 1 is tested tonight.
+- Default stays 02:00 in the machine's timezone (Asia/Kolkata on the build laptop).
+- Sentry DSN set; the worker restarted between runs and logs `sentry: on`.

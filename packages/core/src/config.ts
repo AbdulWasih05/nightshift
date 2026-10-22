@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isWritable } from './allowlist.ts';
 
@@ -42,6 +42,29 @@ export function parseConfig(input: unknown): NightshiftConfig {
       timezone: c.schedule?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     },
   };
+}
+
+/** Persist a new schedule into nightshift.config.json (the file stays the source of truth). */
+export function saveSchedule(schedule: { cron: string; timezone: string }, path = resolve(process.cwd(), 'nightshift.config.json')): void {
+  const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  raw.schedule = schedule;
+  writeFileSync(path, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+}
+
+/** "13:30" -> "30 13 * * *". */
+export function cronFromTime(hhmm: string): string {
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(hhmm.trim());
+  if (!m) throw new Error(`not a time (HH:MM, 24h): ${hhmm}`);
+  return `${Number(m[2])} ${Number(m[1])} * * *`;
+}
+
+export function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function loadConfig(path = resolve(process.cwd(), 'nightshift.config.json')): NightshiftConfig {
