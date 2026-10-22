@@ -7,6 +7,7 @@ import { Agent } from '@mastra/core/agent';
 import { needsHuman, parseTriageOutput, triageOutputSchema, type TriageOutput } from './contract.ts';
 import { renderUserMessage, type TriageInput } from './input.ts';
 import { modelChain, type ModelSpec } from './models.ts';
+import { traceChat } from '../telemetry.ts';
 
 export interface GenerateResult {
   text: string;
@@ -82,15 +83,34 @@ export class ModelTimeoutError extends Error {
  */
 export class ModelHealth {
   private consecutive = new Map<string, number>();
-  constructor(private threshold = 3) {}
+  private lastFailure = new Map<string, number>();
+  /**
+   * After `threshold` consecutive failures a model is skipped; after `retryAfterMs` it gets one more try
+   * (half-open), so an Ollama restart costs minutes, not the rest of the night.
+   */
+  constructor(
+    private threshold = 3,
+    private retryAfterMs = 5 * 60_000,
+    private now: () => number = Date.now,
+  ) {}
   isOpen(path: string): boolean {
-    return (this.consecutive.get(path) ?? 0) >= this.threshold;
+    if ((this.consecutive.get(path) ?? 0) < this.threshold) return false;
+    return this.now() - (this.lastFailure.get(path) ?? 0) < this.retryAfterMs;
   }
   failed(path: string): void {
     this.consecutive.set(path, (this.consecutive.get(path) ?? 0) + 1);
+    this.lastFailure.set(path, this.now());
   }
   succeeded(path: string): void {
     this.consecutive.set(path, 0);
+  }
+}
+
+/** Thrown when no model in the chain answered: an outage, not a classification. The item stays pending. */
+export class ModelsUnavailableError extends Error {
+  constructor(public failures: { path: string; error: string }[]) {
+    super(`no model answered: ${failures.map((f) => `${f.path}: ${f.error}`).join('; ').slice(0, 500)}`);
+    this.name = 'ModelsUnavailableError';
   }
 }
 
@@ -120,8 +140,15 @@ export async function triageItem(input: TriageInput, opts: TriageOptions): Promi
     }
     const signal = AbortSignal.timeout(timeoutMs);
     try {
-      const res = await generate(model, system, user, signal);
-      if (signal.aborted) throw new ModelTimeoutError(model.path);
+      const res = await traceChat(
+        model,
+        async () => {
+          const r = await generate(model, system, user, signal);
+          if (signal.aborted) throw new ModelTimeoutError(model.path);
+          return r;
+        },
+        (r) => ({ tokensIn: r.tokensIn, tokensOut: r.tokensOut, ok: true }),
+      );
       opts.health?.succeeded(model.path);
       const parsed = parseTriageOutput(res.text, {
         duplicateNumbers: input.top_duplicates.map((d) => d.number),

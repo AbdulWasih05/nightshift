@@ -1,11 +1,27 @@
 {
   "repos": [
-    { "repo": "AbdulWasih05/nightshift", "mode": "write" },
-    { "repo": "mastra-ai/mastra", "mode": "read" },
-    { "repo": "temporalio/temporal", "mode": "read" },
-    { "repo": "timescale/timescaledb", "mode": "read" }
+    {
+      "repo": "AbdulWasih05/nightshift",
+      "mode": "write"
+    },
+    {
+      "repo": "mastra-ai/mastra",
+      "mode": "read"
+    },
+    {
+      "repo": "temporalio/temporal",
+      "mode": "read"
+    },
+    {
+      "repo": "timescale/timescaledb",
+      "mode": "read"
+    }
   ],
   "initialLookbackHours": 24,
   "maxItemsPerRepo": 200,
-  "promptVersion": "v1"
+  "promptVersion": "v1",
+  "schedule": {
+    "cron": "0 2 * * *",
+    "timezone": "Asia/Kolkata"
+  }
 }

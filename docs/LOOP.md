@@ -37,3 +37,19 @@ One entry per unit: plan before, reflect after. The post's "How I Built It" is w
 - Slower than planned: duplicate-gate calibration. The 0.80 cosine gate would have offered a "duplicate" for 89% of temporal items, because same-repo text is all alike. Measured the nearest-neighbour distribution before choosing 0.92.
 - Next unit: measure the real data distribution before picking any threshold.
 - For the post: "gemma3:4b called a 414-line concurrency fix TRIVIAL_SAFE at 0.95 confidence. The fix isn't a better prompt; the parser enforces the rules a 4B model can't be trusted with: duplicates must cite a candidate, spam needs two tells, and 'trivial' means under 40 lines."
+
+## 2026-10-22 · unit 4+5+9: Temporal workflow, digest, Sentry
+
+**Plan**
+- Acceptance: `nightshift run` executes collect, embed, triage and digest through Temporal and writes `docs/digests/*.md`. The 02:00 schedule exists. `nightshift preflight` is all green except the Sentry DSN (pending from Wasih). The workflow test survives a failing activity and replays deterministically.
+- Could go wrong: Temporal's webpack bundling of TS workflows under ESM/tsx on Windows; laptop sleep; Sentry leaking contributor text.
+- Cut if it does: run the workflow from a prebuilt JS bundle; cut Sentry to manual spans only.
+
+**Verify**
+- Smoke nights 1-2 ran end to end (0 items). Temporal tests: 3 (retry + dead repo + replay; config rejection; crash still writes the digest and fails the night). 83 tests total.
+- Preflight: DB, allowlist, prompt, fine-grained token, Ollama models, schedule (next: Fri 02:00 IST) and worker all ok; Sentry DSN missing.
+
+**Reflect**
+- Slower than planned: an orphaned worker process silently ran old code and turned a 4-item test into a 200-item night. Process supervision on Windows needs its own script, not a backgrounded shell.
+- Next unit: run real data through the exact production path (scheduled worker, launcher script) before trusting a test.
+- For the post: "The worst bug of the day was in the scheduler, not the model. If Ollama was down, every item came back 'no model answered' and was filed as NEEDS_HUMAN, and the night reported success. Now an outage fails the activity and Temporal waits for Ollama to come back."

@@ -1,6 +1,8 @@
 #!/usr/bin/env -S npx tsx
 import 'dotenv/config';
+import { resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
+import { describeSchedule, ONCE_SCHEDULE_ID, preflight, runNightNow, runWorker, SCHEDULE_ID, scheduleOnce, upsertSchedule } from '@nightshift/workflows';
 import {
   closePool,
   collectRepo,
@@ -8,7 +10,14 @@ import {
   embedPending,
   findDuplicates,
   getPool,
+  cronFromTime,
+  isValidTimezone,
   loadConfig,
+  loadDigest,
+  saveSchedule,
+  renderDigest,
+  renderTerminalSummary,
+  writeDigest,
   selectPending,
   triageBatch,
 } from '@nightshift/core';
@@ -161,6 +170,94 @@ program
           );
         },
       });
+    } finally {
+      await closePool();
+    }
+  });
+
+program
+  .command('worker')
+  .description('Run the Temporal worker (long-running; the 02:00 schedule needs it up)')
+  .action(async () => {
+    await runWorker();
+  });
+
+program
+  .command('schedule')
+  .description('Show or change when the nightly run fires. The run time is yours: 02:00, midday, or once in N minutes.')
+  .option('--at <HH:MM>', 'daily run time, 24h, e.g. 02:00 or 13:30')
+  .option('--cron <expr>', 'full cron expression instead of --at, e.g. "0 2,13 * * 1-5"')
+  .option('--tz <iana>', 'timezone, e.g. Asia/Kolkata, Asia/Dubai, Europe/Berlin (default: config, else this machine)')
+  .option('--once-in <minutes>', 'additionally fire the scheduled run once, N minutes from now (does not change the daily time)', (v) => {
+    const n = Number.parseInt(v, 10);
+    if (!Number.isInteger(n) || n < 1 || n > 1440) throw new InvalidArgumentError(`minutes 1-1440: ${v}`);
+    return n;
+  })
+  .action(async (opts: { at?: string; cron?: string; tz?: string; onceIn?: number }) => {
+    if (opts.at && opts.cron) throw new InvalidArgumentError('use --at or --cron, not both');
+    if (opts.tz && !isValidTimezone(opts.tz)) throw new InvalidArgumentError(`unknown timezone: ${opts.tz}`);
+    const current = loadConfig().schedule;
+    const schedule = {
+      cron: opts.cron ?? (opts.at ? cronFromTime(opts.at) : current.cron),
+      timezone: opts.tz ?? current.timezone,
+    };
+    if (schedule.cron !== current.cron || schedule.timezone !== current.timezone) saveSchedule(schedule);
+    console.log(`${await upsertSchedule(schedule)} daily schedule "${SCHEDULE_ID}": ${schedule.cron} (${schedule.timezone})`);
+    const d = await describeSchedule();
+    console.log(`next daily runs: ${d?.next.slice(0, 3).map((t) => t.toString()).join(' | ')}${d?.paused ? ' [PAUSED]' : ''}`);
+    if (opts.onceIn) {
+      const at = new Date(Date.now() + opts.onceIn * 60_000);
+      at.setSeconds(0, 0);
+      await scheduleOnce(at);
+      console.log(`one-off scheduled run at ${at.toString()} ("${ONCE_SCHEDULE_ID}", fires once)`);
+    }
+  });
+
+program
+  .command('preflight')
+  .description('Check everything the nightly run needs: DB, allowlist, prompt, token, Ollama, schedule, worker, Sentry')
+  .action(async () => {
+    try {
+      if (!(await preflight())) process.exitCode = 1;
+    } finally {
+      await closePool();
+    }
+  });
+
+program
+  .command('run')
+  .description('Run a night now through Temporal and wait for it (needs `nightshift worker` running)')
+  .option('-r, --repo <owner/name...>', 'limit to these repos')
+  .option('-c, --chunk <n>', 'items per triage activity', (v) => Number.parseInt(v, 10))
+  .option('-m, --max <n>', 'cap items per repo for a test run (rest is collected next night)', (v) => Number.parseInt(v, 10))
+  .action(async (opts: { repo?: string[]; chunk?: number; max?: number }) => {
+    const r = await runNightNow({ repos: opts.repo, chunkSize: opts.chunk, maxItemsPerRepo: opts.max });
+    console.log(`
+night ${r.nightId}: ${r.status}; collected ${JSON.stringify(r.collected)}; triaged ${r.triaged}, failed ${r.triageFailed}`);
+    if (r.failedRepos.length) console.log(`failed repos: ${r.failedRepos.join(', ')}`);
+    if (r.summary) console.log(`
+${r.summary}
+
+full digest: ${r.digestPath}`);
+  });
+
+program
+  .command('digest')
+  .description("Print the latest night's digest summary (or --night N) and rewrite docs/digests/<date>.md")
+  .option('-n, --night <id>', 'night id', (v) => Number.parseInt(v, 10))
+  .option('-a, --all', 'print the full markdown digest')
+  .action(async (opts: { night?: number; all?: boolean }) => {
+    const db = getPool();
+    try {
+      const nightId =
+        opts.night ??
+        (await db.query<{ id: number }>("SELECT max(id) AS id FROM nights WHERE status <> 'running'")).rows[0]?.id;
+      if (!nightId) throw new Error('no nights yet; run `nightshift run` or wait for the schedule');
+      const d = await loadDigest(db, nightId);
+      const file = await writeDigest(d, resolve(process.cwd(), 'docs', 'digests'));
+      console.log(opts.all ? renderDigest(d) : `${renderTerminalSummary(d)}
+
+full digest: ${file}`);
     } finally {
       await closePool();
     }
