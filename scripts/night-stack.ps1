@@ -19,8 +19,13 @@ function Test-Docker {
   return ($LASTEXITCODE -eq 0)
 }
 
-# 1. Docker + Postgres
-if (-not (Test-Docker)) {
+# 1. Docker + Postgres, only when the database is local. With Tiger Data (DATABASE_URL on *.timescale.com)
+#    Docker is not needed at all, which frees ~1.4 GB of RAM for Gemma.
+$dbUrl = (Get-Content (Join-Path $repo '.env') | Where-Object { $_ -match '^DATABASE_URL=' } | Select-Object -First 1) -replace '^DATABASE_URL=', ''
+$localDb = $dbUrl -match '@(localhost|127\.0\.0\.1)[:/]'
+if (-not $localDb) {
+  Write-Host 'database: Tiger Data (remote), Docker not needed'
+} elseif (-not (Test-Docker)) {
   Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
   $deadline = (Get-Date).AddSeconds(240)
   while (-not (Test-Docker)) {
@@ -29,6 +34,7 @@ if (-not (Test-Docker)) {
   }
   Write-Host 'docker started'
 }
+if ($localDb) {
 Push-Location $repo
 try {
   $deadline = (Get-Date).AddSeconds(180)
@@ -46,6 +52,7 @@ try {
   }
 } finally { Pop-Location }
 Write-Host 'postgres ready'
+}
 
 # 2. Ollama (usually starts with Windows)
 if (-not (Test-Port 11434)) {

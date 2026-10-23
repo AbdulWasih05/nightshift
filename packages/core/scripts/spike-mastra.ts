@@ -7,7 +7,7 @@ const agent = new Agent({
   id: 'spike',
   name: 'spike',
   instructions: 'Classify. Output JSON only.',
-  model: { id: 'ollama/gemma3:4b', url: 'http://localhost:11434/v1', apiKey: 'ollama' },
+  model: { id: 'ollama/nightshift-gemma3-4b', url: 'http://localhost:11434/v1', apiKey: 'ollama' },
 });
 const t = Date.now();
 const r = await agent.generate('Is "Fix typo in README" bucket A (docs) or B (code)?', {

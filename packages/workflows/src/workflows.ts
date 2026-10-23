@@ -21,10 +21,13 @@ const github = proxyActivities<typeof activities>({
 
 // Ollama: ~50-60s per item. Heartbeat per item; a gap means the worker or laptop stopped, and the retry resumes at
 // the first untriaged item. "No model answered" also fails the activity, so Temporal backs off until Ollama is back.
+// No attempt cap: night 5 used up 10 attempts (~1h) while the laptop was starved for memory, and stopped with
+// 280 items untriaged. Retry for as long as the night can still be useful, every 10 minutes at most.
 const model = proxyActivities<typeof activities>({
   startToCloseTimeout: '3 hours',
+  scheduleToCloseTimeout: '10 hours',
   heartbeatTimeout: '20 minutes',
-  retry: { initialInterval: '1 minute', backoffCoefficient: 2, maximumInterval: '10 minutes', maximumAttempts: 10 },
+  retry: { initialInterval: '1 minute', backoffCoefficient: 2, maximumInterval: '10 minutes' },
 });
 
 export interface NightlyInput {
