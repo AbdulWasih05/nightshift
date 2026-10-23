@@ -3,9 +3,13 @@ import 'dotenv/config';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
+import { pgConfig } from '../packages/core/src/db.ts';
 
 const dir = join(import.meta.dirname, '..', 'db', 'migrations');
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+// MIGRATE_URL lets the same script migrate a second database (e.g. Tiger) without changing DATABASE_URL.
+const target = process.env.MIGRATE_URL || process.env.DATABASE_URL;
+if (!target) throw new Error('DATABASE_URL is not set');
+const client = new pg.Client(pgConfig(target));
 
 await client.connect();
 try {
