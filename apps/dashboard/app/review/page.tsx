@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
+import { ChevronRight, CircleCheck, CircleDashed, CircleDot, CircleX, FileDiff, Files, FlaskConical, GitPullRequest, TriangleAlert, User } from 'lucide-react';
 import { redirect } from 'next/navigation';
-import { auth0, isAllowed } from '@/lib/auth0';
+import { auth0, githubConnected, isAllowed } from '@/lib/auth0';
 import { listNights, nightItems, type DashItem } from '@/lib/data';
 import { Topbar } from '@/components/Topbar';
 import { Toc } from '@/components/Toc';
@@ -19,6 +20,7 @@ export default async function Review({ searchParams }: { searchParams: Promise<{
   if (!isAllowed(session.user)) return <Denied user={session.user} />;
 
   const { night, msg } = await searchParams;
+  const linked = await githubConnected();
   const nights = await listNights();
   const current = nights.find((n) => String(n.id) === night) ?? nights.find((n) => n.status !== 'running') ?? nights[0];
   const items = current ? await nightItems(current.id) : [];
@@ -38,7 +40,7 @@ export default async function Review({ searchParams }: { searchParams: Promise<{
 
   return (
     <>
-      <Topbar loggedIn allowed />
+      <Topbar loggedIn allowed current="review" githubLinked={linked} />
       <div className="doc">
         <Toc items={sections.map(([id, title]) => ({ id: id!, title: title! }))} />
 
@@ -128,7 +130,15 @@ function Group({ id, title, items, night, empty }: { id: string; title: string; 
       <h2>
         {title} ({items.length})
       </h2>
-      {items.length ? items.map((it) => <Item key={it.triage_id} it={it} night={night} />) : <p className="empty">{empty}</p>}
+      {items.length ? (
+        <ol className="rows">
+          {items.map((it) => (
+            <Item key={it.triage_id} it={it} night={night} />
+          ))}
+        </ol>
+      ) : (
+        <p className="empty">{empty}</p>
+      )}
     </section>
   );
 }
@@ -159,33 +169,68 @@ function splitReason(reason: string): { rule: string | null; model: string } {
   return { rule: null, model: reason };
 }
 
-function years(days: number) {
-  return days >= 365 ? `${(days / 365).toFixed(1)} yr old account` : `${days} day old account`;
-}
+const BADGE: Record<string, { label: string; tone: string }> = {
+  NEEDS_HUMAN: { label: 'Needs you', tone: 'amber' },
+  NEEDS_TESTS_OR_INFO: { label: 'Needs tests or info', tone: 'blue' },
+  DUPLICATE: { label: 'Duplicate', tone: 'purple' },
+  TRIVIAL_SAFE: { label: 'Trivial and safe', tone: 'green' },
+  SPAM_OR_SLOP: { label: 'Spam or slop', tone: 'gray' },
+  OUT_OF_SCOPE: { label: 'Out of scope', tone: 'gray' },
+};
 
-/** Facts from the collector (GitHub's data), not from the model. */
-function Facts({ it }: { it: DashItem }) {
-  const facts: { text: string; tone?: 'good' | 'bad' }[] = [];
+const I = { size: 14, strokeWidth: 1.75, 'aria-hidden': true } as const;
+
+/** One muted line of facts from GitHub (the collector), not from the model. */
+function Meta({ it, path }: { it: DashItem; path: string }) {
+  const age = it.author_account_age_days;
+  const parts: React.ReactNode[] = [
+    <a key="ref" className="row-ref" href={`https://github.com/${it.repo}/${path}/${it.number}`} target="_blank" rel="noreferrer">
+      {it.repo}#{it.number}
+    </a>,
+  ];
   if (it.kind === 'pr') {
-    if (it.additions !== null) facts.push({ text: `+${it.additions} / −${it.deletions ?? 0}` });
-    if (it.files_changed !== null) facts.push({ text: `${it.files_changed} file${it.files_changed === 1 ? '' : 's'}` });
-    if (it.has_tests !== null) facts.push({ text: it.has_tests ? 'touches tests' : 'no tests', tone: it.has_tests ? 'good' : 'bad' });
+    if (it.additions !== null)
+      parts.push(
+        <span key="diff" className="meta-item">
+          <FileDiff {...I} />
+          <span className="add">+{it.additions}</span> <span className="del">−{it.deletions ?? 0}</span>
+        </span>,
+      );
+    if (it.files_changed !== null)
+      parts.push(
+        <span key="files" className="meta-item">
+          <Files {...I} />
+          {it.files_changed} file{it.files_changed === 1 ? '' : 's'}
+        </span>,
+      );
+    if (it.has_tests !== null)
+      parts.push(
+        <span key="tests" className={`meta-item ${it.has_tests ? 'ok' : 'bad'}`}>
+          <FlaskConical {...I} />
+          {it.has_tests ? 'tests' : 'no tests'}
+        </span>,
+      );
     if (it.ci_status && it.ci_status !== 'none') {
-      facts.push({ text: `CI ${it.ci_status === 'success' ? 'passing' : it.ci_status === 'failure' ? 'failing' : 'pending'}`, tone: it.ci_status === 'success' ? 'good' : it.ci_status === 'failure' ? 'bad' : undefined });
+      const CI = it.ci_status === 'success' ? CircleCheck : it.ci_status === 'failure' ? CircleX : CircleDashed;
+      parts.push(
+        <span key="ci" className={`meta-item ${it.ci_status === 'success' ? 'ok' : it.ci_status === 'failure' ? 'bad' : ''}`}>
+          <CI {...I} />
+          CI {it.ci_status === 'success' ? 'passing' : it.ci_status === 'failure' ? 'failing' : 'pending'}
+        </span>,
+      );
     }
   }
-  facts.push({ text: `@${it.author}` });
-  if (it.author_account_age_days !== null) facts.push({ text: years(it.author_account_age_days) });
-  if (it.author_prior_merged !== null) facts.push({ text: `${it.author_prior_merged} prior merged PR${it.author_prior_merged === 1 ? '' : 's'}` });
-  return (
-    <ul className="facts" aria-label="Facts from GitHub">
-      {facts.map((f) => (
-        <li key={f.text} className={f.tone ? `fact-${f.tone}` : undefined}>
-          {f.text}
-        </li>
-      ))}
-    </ul>
+  const history = [
+    age !== null ? (age >= 365 ? `${(age / 365).toFixed(1)} yr` : `${age} d`) : null,
+    it.author_prior_merged !== null ? `${it.author_prior_merged} merged` : null,
+  ].filter(Boolean);
+  parts.push(
+    <span key="author" className="meta-item">
+      <User {...I} />@{it.author}
+      {history.length > 0 && <span className="dim">&nbsp;({history.join(', ')})</span>}
+    </span>,
   );
+  return <div className="row-meta">{parts}</div>;
 }
 
 function Item({ it, night }: { it: DashItem; night: string }) {
@@ -194,118 +239,130 @@ function Item({ it, night }: { it: DashItem; night: string }) {
   const path = it.kind === 'pr' ? 'pull' : 'issues';
   const shown = approved && it.decided_text ? it.decided_text : it.draft_reply;
   const { rule, model } = splitReason(it.reason);
-  // Drop evidence that just repeats the title or body; keep what the model actually pointed at.
   const evidence = (it.evidence ?? []).filter((e) => !/^(title|body)\s*[:=]/i.test(e));
+  const badge = BADGE[it.bucket] ?? { label: it.bucket, tone: 'gray' };
+  const Kind = it.kind === 'pr' ? GitPullRequest : CircleDot;
   return (
-    <article className="item" aria-labelledby={`t-${it.triage_id}`}>
-      <header className="item-head">
-        <span className={`status s-${it.bucket}`}>{it.bucket.replaceAll('_', ' ').toLowerCase()}</span>
-        <a className="item-ref" href={`https://github.com/${it.repo}/${path}/${it.number}`} target="_blank" rel="noreferrer">
-          {it.repo}#{it.number}
-        </a>
-        <span className="item-meta">
-          {it.kind === 'pr' ? 'PR' : 'Issue'} · {it.model_path}
-          {it.confidence !== null ? ` · ${Math.round(it.confidence * 100)}%` : ''}
-          {it.parse_ok ? '' : ' · parse failure'}
-        </span>
-      </header>
-      <h3 id={`t-${it.triage_id}`}>{it.title}</h3>
-      <Facts it={it} />
+    <li className="row" aria-labelledby={`t-${it.triage_id}`}>
+      <div className="row-head">
+        <Kind {...I} className="row-kind" aria-label={it.kind === 'pr' ? 'Pull request' : 'Issue'} />
+        <h3 id={`t-${it.triage_id}`}>{it.title}</h3>
+        <span className={`badge badge-${badge.tone}`}>{badge.label}</span>
+      </div>
+      <Meta it={it} path={path} />
 
       {rule && (
-        <p className="overruled">
-          <span>Overruled by rule</span>
-          {rule}
-        </p>
+        <div className="callout callout-warning" role="note">
+          <TriangleAlert {...I} />
+          <p>
+            <strong>Overruled by a rule.</strong> {rule}
+          </p>
+        </div>
       )}
-      <div className="reasoning">
-        <p className="label">{rule ? "Model's reasoning" : 'Why'}</p>
-        <p className="clamp">{model}</p>
-      </div>
-
-      {(evidence.length > 0 || it.duplicates?.length > 0) && (
-        <details className="more">
-          <summary>
-            {evidence.length > 0 && `Model's evidence (${evidence.length})`}
-            {evidence.length > 0 && it.duplicates?.length > 0 && ' · '}
-            {it.duplicates?.length > 0 && `Duplicate candidates (${it.duplicates.length})`}
-          </summary>
-          {evidence.length > 0 && (
-            <ul className="evidence">
-              {evidence.map((e, i) => (
-                <li key={i}>{e}</li>
-              ))}
-            </ul>
-          )}
-          {it.duplicates?.length > 0 && (
-            <ul className="evidence">
-              {it.duplicates.map((d) => (
-                <li key={d.number}>
-                  <a href={`https://github.com/${it.repo}/${path}/${d.number}`} target="_blank" rel="noreferrer">
-                    #{d.number}
-                  </a>{' '}
-                  {d.title} <span className="item-meta">({d.why})</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </details>
-      )}
+      <p className="row-reason">
+        {rule && <span className="dim">The model said: </span>}
+        {model}
+      </p>
 
       {it.draft_reply && shown && (
-        <div className="draft">
-          <p className="label">{approved ? (it.decision === 'edit' ? 'Your edited reply' : 'Approved reply') : 'Drafted reply'}</p>
-          <div className="draft-text">{shown}</div>
-          {it.posted_url ? (
-            <p className="item-meta">
-              Posted: <a href={it.posted_url}>{it.posted_url}</a>
-            </p>
-          ) : (
-            <div className="actions">
+        <div className="panel">
+          <div className="panel-head">
+            <span>{approved ? (it.decision === 'edit' ? 'Your edited reply' : 'Approved reply') : 'Drafted reply'}</span>
+            {it.posted_url && (
+              <a href={it.posted_url} target="_blank" rel="noreferrer">
+                View on GitHub
+              </a>
+            )}
+          </div>
+          <div className="panel-body">{shown}</div>
+          {!it.posted_url && (
+            <div className="panel-foot">
               <form action={approveAction}>
                 <Hidden it={it} night={night} />
                 <input type="hidden" name="hash" value={hash(it.draft_reply)} />
-                <button className="btn" disabled={approved}>
+                <button className="btn btn-sm" disabled={approved}>
                   {approved ? 'Approved' : 'Approve'}
                 </button>
               </form>
               <form action={skipAction}>
                 <Hidden it={it} night={night} />
-                <button className="btn">{it.decision === 'skip' ? 'Skipped' : 'Skip'}</button>
+                <button className="btn btn-sm">{it.decision === 'skip' ? 'Skipped' : 'Skip'}</button>
               </form>
+              <details className="edit">
+                <summary className="btn btn-sm">Edit</summary>
+                <form action={editAction}>
+                  <Hidden it={it} night={night} />
+                  <label className="dim" htmlFor={`e-${it.triage_id}`}>
+                    Your version of the reply
+                  </label>
+                  <textarea id={`e-${it.triage_id}`} name="text" defaultValue={shown} />
+                  <button className="btn btn-sm">Save and approve</button>
+                </form>
+              </details>
+              <span className="spacer" />
               {own ? (
                 <form action={postAction}>
                   <Hidden it={it} night={night} />
-                  <button className="btn primary" disabled={!approved || it.state !== 'open'} title={approved ? 'Post as a comment' : 'Approve first'}>
+                  <button className="btn btn-sm primary" disabled={!approved || it.state !== 'open'} title={approved ? 'Post as a comment' : 'Approve first'}>
                     Post to GitHub
                   </button>
                 </form>
               ) : (
-                <span className="item-meta">Read-only repository: your decision is recorded, nothing is posted.</span>
+                <span className="dim small">Read-only repo · never posted</span>
               )}
-              <details className="edit">
-                <summary>Edit before approving</summary>
-                <form action={editAction}>
-                  <Hidden it={it} night={night} />
-                  <label className="item-meta" htmlFor={`e-${it.triage_id}`}>
-                    Your version of the reply
-                  </label>
-                  <textarea id={`e-${it.triage_id}`} name="text" defaultValue={shown} />
-                  <button className="btn">Save edit and approve</button>
-                </form>
-              </details>
             </div>
           )}
         </div>
       )}
-    </article>
+
+      <div className="row-foot">
+        <span>
+          {it.model_path}
+          {it.confidence !== null ? ` · ${Math.round(it.confidence * 100)}% confidence` : ''}
+          {it.parse_ok ? '' : ' · parse failure'}
+        </span>
+        {(evidence.length > 0 || it.duplicates?.length > 0) && (
+          <details className="more">
+            <summary>
+              <ChevronRight {...I} className="chev" />
+              Details
+            </summary>
+            {evidence.length > 0 && (
+              <>
+                <p className="more-title">Model&apos;s evidence</p>
+                <ul>
+                  {evidence.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {it.duplicates?.length > 0 && (
+              <>
+                <p className="more-title">Duplicate candidates</p>
+                <ul>
+                  {it.duplicates.map((d) => (
+                    <li key={d.number}>
+                      <a href={`https://github.com/${it.repo}/${path}/${d.number}`} target="_blank" rel="noreferrer">
+                        #{d.number}
+                      </a>{' '}
+                      {d.title} <span className="dim">({d.why})</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </details>
+        )}
+      </div>
+    </li>
   );
 }
 
 function Denied({ user }: { user: { sub?: string; nickname?: string; name?: string; email?: string } }) {
   return (
     <>
-      <Topbar loggedIn allowed={false} />
+      <Topbar loggedIn allowed={false} current="review" />
       <main className="center-page">
         <div className="card">
           <h1>Not on the maintainer list</h1>

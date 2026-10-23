@@ -33,3 +33,16 @@ export function isAllowed(user: SessionUser | undefined | null): boolean {
   const emails = list(process.env.ALLOWED_EMAILS);
   return Boolean(user.email && user.email_verified !== false && emails.includes(user.email.toLowerCase()));
 }
+
+/**
+ * Has the maintainer connected GitHub (Connected Accounts / Token Vault)? True if Token Vault can hand out a GitHub
+ * token for this session. Used only to decide whether to show "Connect GitHub"; the token itself is discarded.
+ */
+export async function githubConnected(): Promise<boolean> {
+  try {
+    const t = await auth0.getAccessTokenForConnection({ connection: 'github' });
+    return Boolean(t?.token);
+  } catch {
+    return false;
+  }
+}

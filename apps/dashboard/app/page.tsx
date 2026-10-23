@@ -1,4 +1,4 @@
-import { auth0, isAllowed } from '@/lib/auth0';
+import { auth0, githubConnected, isAllowed } from '@/lib/auth0';
 import { publicStats, type PublicStats } from '@/lib/data';
 import { PipelineFigure } from '@/components/PipelineFigure';
 import { Topbar } from '@/components/Topbar';
@@ -22,6 +22,7 @@ const pct = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : nul
 export default async function CaseStudy() {
   const session = await auth0.getSession();
   const allowed = isAllowed(session?.user);
+  const linked = allowed ? await githubConnected() : false;
   let stats: PublicStats | null = null;
   try {
     stats = await publicStats();
@@ -33,7 +34,7 @@ export default async function CaseStudy() {
 
   return (
     <>
-      <Topbar loggedIn={Boolean(session)} allowed={allowed} />
+      <Topbar loggedIn={Boolean(session)} allowed={allowed} current="case-study" githubLinked={linked} />
       <div className="doc">
         <Toc items={SECTIONS.map(([id, title]) => ({ id, title }))} />
 
@@ -327,7 +328,7 @@ export default async function CaseStudy() {
           <section className="section" id="reproduce">
             <h2>Reproduce</h2>
             <p>Laptop mode needs Node 20+, pnpm, Ollama and a Postgres with pgvector (Tiger Data or Docker).</p>
-            <pre className="draft-text">{`pnpm install
+            <pre className="codeblock">{`pnpm install
 ollama pull gemma3:4b && ollama pull gemma3:1b && ollama pull nomic-embed-text
 pnpm db:migrate
 pnpm night            # start the stack and run once, two minutes from now
