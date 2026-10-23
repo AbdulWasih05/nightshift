@@ -53,3 +53,75 @@ export async function nightItems(nightId: number): Promise<DashItem[]> {
   );
   return rows;
 }
+
+export interface PublicStats {
+  nights: { id: number; trigger: string; status: string; started_at: Date; finished_at: Date | null; triaged: number }[];
+  triaged: number;
+  distinctItems: number;
+  buckets: { bucket: string; n: number }[];
+  parseFailures: number;
+  medianLatencyS: number | null;
+  tokensIn: number;
+  tokensOut: number;
+  modelPaths: { model_path: string; n: number }[];
+  labelled: number;
+  correct: number;
+  approvals: number;
+  posts: number;
+  corpus: { repo: string; n: number }[];
+  withDuplicateCandidates: number;
+}
+
+/**
+ * Aggregates only, for the public case study. No titles, bodies, logins or drafts ever leave this function:
+ * counts per night, per bucket and per model path, from each night's own prompt version.
+ */
+export async function publicStats(): Promise<PublicStats> {
+  const db = getPool();
+  const own = `FROM triage t JOIN nights n ON n.id = t.night_id WHERE t.prompt_version = n.prompt_version`;
+  const [nights, totals, buckets, paths, labels, actions, corpus] = await Promise.all([
+    db.query(
+      `SELECT n.id, n.trigger, n.status, n.started_at, n.finished_at,
+              (SELECT count(*)::int FROM triage t WHERE t.night_id = n.id AND t.prompt_version = n.prompt_version) AS triaged
+         FROM nights n ORDER BY n.id`,
+    ),
+    db.query(
+      `SELECT count(*)::int AS triaged, count(DISTINCT t.item_id)::int AS distinct_items,
+              count(*) FILTER (WHERE NOT t.parse_ok)::int AS parse_failures,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY t.latency_ms) AS median_ms,
+              coalesce(sum(t.tokens_in), 0)::bigint AS tokens_in, coalesce(sum(t.tokens_out), 0)::bigint AS tokens_out,
+              count(*) FILTER (WHERE jsonb_array_length(coalesce(t.input->'top_duplicates', '[]'::jsonb)) > 0)::int AS with_dups
+         ${own}`,
+    ),
+    db.query(`SELECT t.bucket, count(*)::int AS n ${own} GROUP BY 1 ORDER BY 2 DESC`),
+    db.query(`SELECT t.model_path, count(*)::int AS n ${own} GROUP BY 1 ORDER BY 2 DESC`),
+    db.query(
+      `SELECT count(*)::int AS labelled, count(*) FILTER (WHERE l.bucket = t.bucket AND t.parse_ok)::int AS correct
+         FROM triage t JOIN nights n ON n.id = t.night_id AND t.prompt_version = n.prompt_version
+         JOIN labels_human l ON l.item_id = t.item_id AND l.night_id = t.night_id`,
+    ),
+    db.query(
+      `SELECT count(*) FILTER (WHERE action IN ('approve', 'edit'))::int AS approvals,
+              count(*) FILTER (WHERE action = 'post' AND posted_url IS NOT NULL)::int AS posts FROM approvals`,
+    ),
+    db.query(`SELECT repo, count(*)::int AS n FROM items GROUP BY 1 ORDER BY 2 DESC`),
+  ]);
+  const t = totals.rows[0];
+  return {
+    nights: nights.rows,
+    triaged: t.triaged,
+    distinctItems: t.distinct_items,
+    buckets: buckets.rows,
+    parseFailures: t.parse_failures,
+    medianLatencyS: t.median_ms === null ? null : Number(t.median_ms) / 1000,
+    tokensIn: Number(t.tokens_in),
+    tokensOut: Number(t.tokens_out),
+    modelPaths: paths.rows,
+    labelled: labels.rows[0].labelled,
+    correct: labels.rows[0].correct,
+    approvals: actions.rows[0].approvals,
+    posts: actions.rows[0].posts,
+    corpus: corpus.rows,
+    withDuplicateCandidates: t.with_dups,
+  };
+}

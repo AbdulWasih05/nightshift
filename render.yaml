@@ -24,5 +24,7 @@ services:
         generateValue: true
       - key: APP_BASE_URL # e.g. https://nightshift-dashboard.onrender.com
         sync: false
-      - key: ALLOWED_EMAILS # comma-separated maintainer emails; nobody else can see drafts or approve
+      - key: ALLOWED_USERS # comma-separated Auth0 user ids (e.g. github|12345678); shown on the dashboard's deny page
+        sync: false
+      - key: ALLOWED_EMAILS # optional: comma-separated verified emails
         sync: false

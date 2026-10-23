@@ -8,13 +8,13 @@ import { auth0, isAllowed } from '@/lib/auth0';
 
 async function maintainer(): Promise<string> {
   const session = await auth0.getSession();
-  if (!session) redirect('/auth/login');
-  if (!isAllowed(session.user.email)) throw new Error('not allowed');
-  return session.user.email!;
+  if (!session) redirect("/auth/login?returnTo=/review");
+  if (!isAllowed(session.user)) throw new Error('not allowed');
+  return session.user.email ?? session.user.sub!;
 }
 
 function back(night: string, msg: string): never {
-  redirect(`/?night=${encodeURIComponent(night)}&msg=${encodeURIComponent(msg)}`);
+  redirect(`/review?night=${encodeURIComponent(night)}&msg=${encodeURIComponent(msg)}`);
 }
 
 function ids(form: FormData) {

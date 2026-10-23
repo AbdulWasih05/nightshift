@@ -8,11 +8,28 @@ export const auth0 = new Auth0Client({
   enableConnectAccountEndpoint: true,
 });
 
-/** Only these people can see drafts or approve anything. Comma-separated, case-insensitive. */
-export function isAllowed(email: string | undefined | null): boolean {
-  const allow = (process.env.ALLOWED_EMAILS ?? '')
+const list = (v: string | undefined) =>
+  (v ?? '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  return Boolean(email) && allow.includes(email!.toLowerCase());
+
+export interface SessionUser {
+  sub?: string;
+  email?: string;
+  email_verified?: boolean;
+  nickname?: string;
+}
+
+/**
+ * Only these people can see drafts or approve anything: ALLOWED_EMAILS (verified emails) or ALLOWED_USERS
+ * (Auth0 user ids like "github|12345678"). GitHub logins often carry no email (private email, or the GitHub
+ * App lacks the "Email addresses" permission), so the stable user id is the reliable key.
+ */
+export function isAllowed(user: SessionUser | undefined | null): boolean {
+  if (!user) return false;
+  const ids = list(process.env.ALLOWED_USERS);
+  if (user.sub && ids.includes(user.sub.toLowerCase())) return true;
+  const emails = list(process.env.ALLOWED_EMAILS);
+  return Boolean(user.email && user.email_verified !== false && emails.includes(user.email.toLowerCase()));
 }
