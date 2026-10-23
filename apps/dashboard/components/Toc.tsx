@@ -44,8 +44,11 @@ export function Toc({ items }: { items: TocItem[] }) {
     listRef.current?.querySelector('[aria-current="location"]')?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
+  const index = Math.max(0, items.findIndex((i) => i.id === active));
+  // Rail fill: from the top of the list to the middle of the active entry.
+  const progress = `${((index + 0.5) / Math.max(1, items.length)) * 100}%`;
   const links = (ref?: React.Ref<HTMLOListElement>) => (
-    <ol ref={ref}>
+    <ol ref={ref} style={{ ['--progress' as string]: progress }}>
       {items.map((item, i) => (
         <li key={item.id}>
           <a href={`#${item.id}`} aria-current={active === item.id ? 'location' : undefined}>

@@ -25,6 +25,14 @@ export interface DashItem {
   model_path: string;
   parse_ok: boolean;
   duplicates: { number: number; title: string; why: string }[];
+  additions: number | null;
+  deletions: number | null;
+  files_changed: number | null;
+  has_tests: boolean | null;
+  ci_status: string | null;
+  author: string;
+  author_account_age_days: number | null;
+  author_prior_merged: number | null;
   decision: string | null; // latest approve/edit/skip
   decided_text: string | null;
   posted_url: string | null;
@@ -42,6 +50,8 @@ export async function nightItems(nightId: number): Promise<DashItem[]> {
   const { rows } = await getPool().query<DashItem>(
     `SELECT t.id AS triage_id, i.repo, i.number, i.kind, i.title, i.state, t.bucket, t.confidence, t.reason,
             t.evidence, t.draft_reply, t.model_path, t.parse_ok,
+            i.additions, i.deletions, i.files_changed, i.has_tests, i.ci_status, i.author,
+            i.author_account_age_days, i.author_prior_merged,
             COALESCE(t.input->'top_duplicates', '[]'::jsonb) AS duplicates,
             (SELECT a.action FROM approvals a WHERE a.triage_id = t.id AND a.action <> 'post' ORDER BY a.id DESC LIMIT 1) AS decision,
             (SELECT a.final_text FROM approvals a WHERE a.triage_id = t.id AND a.action <> 'post' ORDER BY a.id DESC LIMIT 1) AS decided_text,
