@@ -118,7 +118,7 @@ export interface TriageOptions {
   promptVersion: string;
   models?: ModelSpec[];
   generate?: GenerateFn;
-  /** Per-model timeout. The 4B model on the build laptop takes ~15-60s per item. */
+  /** Per-model timeout (default 480s). The 4B model on the build laptop takes ~50-130s per item. */
   timeoutMs?: number;
   /** Shared across a run so repeated failures trip the breaker. */
   health?: ModelHealth;
@@ -129,7 +129,9 @@ export async function triageItem(input: TriageInput, opts: TriageOptions): Promi
   const user = renderUserMessage(input);
   const models = opts.models ?? modelChain();
   const generate = opts.generate ?? mastraGenerate;
-  const timeoutMs = opts.timeoutMs ?? 240_000;
+  // 480s: a warm item takes ~50-130s on the laptop GPU, but under memory pressure a healthy model can take
+  // several minutes; that is slow, not failed.
+  const timeoutMs = opts.timeoutMs ?? 480_000;
   const failures: TriageRun['failures'] = [];
   const started = Date.now();
 

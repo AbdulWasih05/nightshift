@@ -51,7 +51,7 @@ afterAll(async () => {
   await db?.end();
 });
 
-describe.skipIf(!process.env.DATABASE_URL)('approval gate (needs Postgres)', () => {
+describe.skipIf(!process.env.TEST_DATABASE_URL)('approval gate (needs Postgres)', () => {
   it('refuses to post without an approval', async () => {
     if (!db) return;
     const id = await triageRow(await item('AbdulWasih05/nightshift', 1), 'Could you add a test?');

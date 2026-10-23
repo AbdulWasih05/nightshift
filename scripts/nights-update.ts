@@ -4,8 +4,9 @@ import 'dotenv/config';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
+import { pgConfig } from '../packages/core/src/db.ts';
 
-const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const db = new pg.Pool(pgConfig(process.env.DATABASE_URL ?? ''));
 
 interface NightRow {
   id: number;

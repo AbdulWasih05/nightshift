@@ -11,6 +11,13 @@ const db = proxyActivities<typeof activities>({
   retry: { initialInterval: '10s', backoffCoefficient: 2, maximumInterval: '5 minutes' }, // unlimited attempts, bounded by scheduleToClose
 });
 
+// Local process management (start/stop Ollama): quick, a few retries.
+const local = proxyActivities<typeof activities>({
+  startToCloseTimeout: '3 minutes',
+  heartbeatTimeout: '30 seconds',
+  retry: { initialInterval: '30s', backoffCoefficient: 2, maximumAttempts: 5 },
+});
+
 // GitHub: rate limits fail the request after 120s (see github/client.ts); back off and retry here.
 // Heartbeats per page and per item, so after laptop sleep the stale attempt is cancelled, not raced.
 const github = proxyActivities<typeof activities>({
@@ -21,10 +28,13 @@ const github = proxyActivities<typeof activities>({
 
 // Ollama: ~50-60s per item. Heartbeat per item; a gap means the worker or laptop stopped, and the retry resumes at
 // the first untriaged item. "No model answered" also fails the activity, so Temporal backs off until Ollama is back.
+// No attempt cap: night 5 used up 10 attempts (~1h) while the laptop was starved for memory, and stopped with
+// 280 items untriaged. Retry for as long as the night can still be useful, every 10 minutes at most.
 const model = proxyActivities<typeof activities>({
   startToCloseTimeout: '3 hours',
+  scheduleToCloseTimeout: '10 hours',
   heartbeatTimeout: '20 minutes',
-  retry: { initialInterval: '1 minute', backoffCoefficient: 2, maximumInterval: '10 minutes', maximumAttempts: 10 },
+  retry: { initialInterval: '1 minute', backoffCoefficient: 2, maximumInterval: '10 minutes' },
 });
 
 export interface NightlyInput {
@@ -89,14 +99,21 @@ export async function nightlyTriage(input: NightlyInput = {}): Promise<NightlyRe
     result.backlogClaimed = await db.claimBacklog({ nightId, repos, promptVersion: config.promptVersion });
     if (result.backlogClaimed) notes.push(`claimed ${result.backlogClaimed} backlog items`);
 
-    // 3. Embed for duplicate search. Non-fatal: triage still runs, with weaker duplicate evidence.
+    // 3. Start Ollama if it was stopped after the last run. If it cannot start, triage's own retries wait for it.
+    try {
+      await local.ensureModels();
+    } catch (err) {
+      notes.push(`ollama did not start: ${describe(err)}`);
+    }
+
+    // 4. Embed for duplicate search. Non-fatal: triage still runs, with weaker duplicate evidence.
     try {
       await model.embed({ repos });
     } catch (err) {
       notes.push(`embed failed: ${describe(err)}`);
     }
 
-    // 4. Triage in chunks until the night's queue is empty. Each chunk is a separately retried activity.
+    // 5. Triage in chunks until the night's queue is empty. Each chunk is a separately retried activity.
     const size = input.chunkSize ?? 10;
     try {
       for (;;) {
@@ -119,7 +136,7 @@ export async function nightlyTriage(input: NightlyInput = {}): Promise<NightlyRe
     if (crashed || result.failedRepos.length === repos.length) result.status = 'failed';
     else if (notes.some((n) => /failed|unprocessed/.test(n)) || result.triageFailed > 0) result.status = 'partial';
 
-    // 5. Digest, always attempted, even for a partial or failed night.
+    // 6. Digest, always attempted, even for a partial or failed night.
     try {
       const d = await db.writeDigest({ nightId });
       result.digestPath = d.path;
@@ -129,6 +146,12 @@ export async function nightlyTriage(input: NightlyInput = {}): Promise<NightlyRe
       if (result.status === 'ok') result.status = 'partial';
     }
     await db.finishNight({ nightId, status: result.status, notes: notes.join('\n') || 'clean run' });
+    // Nothing heavy idles on the laptop: unload models and stop Ollama. Best effort.
+    try {
+      await local.releaseModels();
+    } catch {
+      // never fail a finished night over cleanup
+    }
   }
   if (crashed) throw crashed;
   return result;

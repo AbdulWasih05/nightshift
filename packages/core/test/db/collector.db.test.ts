@@ -20,7 +20,7 @@ afterAll(async () => {
   await db?.end();
 });
 
-describe.skipIf(!process.env.DATABASE_URL)('collector vs backfill (needs Postgres)', () => {
+describe.skipIf(!process.env.TEST_DATABASE_URL)('collector vs backfill (needs Postgres)', () => {
   it('a backfilled item at the same updated_at is still collected, then becomes unchanged', async () => {
     if (!db) return;
     const i = issue(1, '2026-10-21T10:00:00Z');

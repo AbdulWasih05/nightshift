@@ -28,6 +28,8 @@ function mocks(state: { chunkCalls: number; triaged: number; finished?: { status
       return { repo, collected: total, capped: false, errors: 0 };
     },
     claimBacklog: async () => 0,
+    ensureModels: async () => 'already running',
+    releaseModels: async () => 'ollama stopped',
     embed: async () => total,
     triageChunk: async ({ size }) => {
       state.chunkCalls++;

@@ -12,3 +12,6 @@ __pycache__/
 
 # Local Claude Code config (agents, settings): not part of the project
 .claude/
+.next/
+next-env.d.ts
+*.tsbuildinfo

@@ -60,7 +60,7 @@ async function dupsOf(number: number) {
   return findDuplicates(db!, rows[0]!.id, 5);
 }
 
-describe.skipIf(!process.env.DATABASE_URL)('hybrid duplicate search (needs Postgres)', () => {
+describe.skipIf(!process.env.TEST_DATABASE_URL)('hybrid duplicate search (needs Postgres)', () => {
   it('finds the known duplicate pair with both halves', async () => {
     if (!db) return;
     const d = await dupsOf(2);

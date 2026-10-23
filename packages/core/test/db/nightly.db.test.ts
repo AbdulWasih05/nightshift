@@ -26,7 +26,7 @@ afterAll(async () => {
   await db?.end();
 });
 
-describe.skipIf(!process.env.DATABASE_URL)('night queue (needs Postgres)', () => {
+describe.skipIf(!process.env.TEST_DATABASE_URL)('night queue (needs Postgres)', () => {
   it('claims items collected outside a night and leftovers of an earlier night, not closed or corpus items', async () => {
     if (!db) return;
     const n1 = await startNight(db, ['t/r'], 'v1');

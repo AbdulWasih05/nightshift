@@ -1,0 +1,30 @@
+# Render blueprint for the hosted dashboard ("Deploy to Render" button in the README).
+# The dashboard reads triage results from Postgres (Tiger Data) and posts approved replies with a GitHub
+# token it gets from Auth0 Token Vault at the moment of posting. No GitHub token is configured here.
+services:
+  - type: web
+    name: nightshift-dashboard
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @nightshift/dashboard build
+    startCommand: pnpm --filter @nightshift/dashboard start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL # Tiger Data service URL (the laptop writes, the dashboard reads and records approvals)
+        sync: false
+      - key: AUTH0_DOMAIN
+        sync: false
+      - key: AUTH0_CLIENT_ID
+        sync: false
+      - key: AUTH0_CLIENT_SECRET
+        sync: false
+      - key: AUTH0_SECRET
+        generateValue: true
+      - key: APP_BASE_URL # e.g. https://nightshift-dashboard.onrender.com
+        sync: false
+      - key: ALLOWED_USERS # comma-separated Auth0 user ids (e.g. github|12345678); shown on the dashboard's deny page
+        sync: false
+      - key: ALLOWED_EMAILS # optional: comma-separated verified emails
+        sync: false
