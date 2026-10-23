@@ -7,6 +7,10 @@ services:
       POSTGRES_USER: nightshift
       POSTGRES_PASSWORD: nightshift
       POSTGRES_DB: nightshift
+    # Capped so a night's Postgres never competes with Gemma for the laptop's 4 cores.
+    cpus: "1.0"
+    mem_limit: 1g
+    command: postgres -c shared_buffers=128MB -c max_connections=40
     ports:
       - "5433:5432"
     volumes:

@@ -83,3 +83,27 @@ Not fixed, by choice:
 - The digest is not tied to 02:00. `nightshift schedule --at 13:30 [--tz Asia/Dubai]` sets the daily time (saved to `nightshift.config.json`), `--cron` handles anything else, and `nightshift run` gives an immediate summary. `nightshift schedule --once-in N` fires the scheduled path once, N minutes from now, without changing the daily time; that is how night 1 is tested tonight.
 - Default stays 02:00 in the machine's timezone (Asia/Kolkata on the build laptop).
 - Sentry DSN set; the worker restarted between runs and logs `sentry: on`.
+
+## 2026-10-22 late: compressed schedule, publish Saturday ~19:00 IST (Wasih's call)
+- **Cut:** ElevenLabs, GitHub Action, Entire, Tinker fine-tune, changelog draft, .tech. None is core, and each costs hours we now spend on real nights and the write-up. The post mentions none of them as shipped.
+- **Kept, time-boxed:** dashboard on Render + Auth0 (Token Vault 45 min, otherwise stubbed and logged). TabPFN ~2h, otherwise cut and logged.
+- **Nights:** night 5 (scheduled one-off at 23:01 Thu) and night 6 (Fri). An optional Saturday afternoon run is listed as manual. The post reports exactly the nights in NIGHTS.md.
+- **Reversed the same evening (Wasih):** nothing is cut. ElevenLabs, GitHub Action, Entire, Tinker (its Friday-night 250-label go/no-go rule from the brief still applies) and the changelog draft are back in scope, built after core. .tech stays deferred pending last week's winner. Render deploys from a "Deploy to Render" button (render.yaml blueprint) in the README.
+
+## 2026-10-23
+
+- **Laptop rebooted at 23:42 IST, ~40 min into night 5**, and nothing restarted: Docker, the Temporal dev server, the worker and Ollama were all down until 12:25 the next day. The 02:00 run was missed: its 6h catch-up window had passed by the time Temporal was back. Night 5 resumed from Temporal's SQLite state when the stack was restarted (9 → 12 items within minutes); no work was lost and nothing was triaged twice.
+- **CPU budget on a 4-core laptop (Wasih's call):** the night must not take the whole machine.
+  - Gemma runs from Modelfile copies of the same weights with `num_thread 3` (`nightshift-gemma3-4b`, `nightshift-gemma3-1b`; `TRIAGE_MODEL_TAG`). `model_path` still records `gemma3:4b`.
+  - `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=1`.
+  - Postgres is capped at 1 CPU / 1 GB (`shared_buffers=128MB`).
+  - Heavy builds and tests are kept away from night runs.
+- **`.claude/` removed from the repo** (local Claude Code config, not project code) and gitignored.
+
+### Builder-review of unit 6: review loop + approval gate (2026-10-23)
+Fixed:
+- **Blocker: posted text could differ from what the human read.** The digest shows 90 chars of a draft, `approve` saved the full DB text unseen, and a re-upsert could rewrite the draft after approval. Now `approve` prints the full draft and asks y/N (or takes `--hash` of the text shown); the approval records only text whose hash matches; `saveTriage` never rewrites a row that has an approval.
+- **Blocker: the same reply could be posted twice** (concurrent posts, comment created then DB insert failed, Octokit retrying a 5xx POST). The `post` row is now claimed before the network call, under a unique index of one post per GitHub item (not per triage row, so a later night's draft for the same issue cannot post again). Writes go out with `retries: 0`; a failed call leaves the claim for a human to check on GitHub. Closed items are refused.
+- **Labels are per (item, night)** (migration 007). A re-triaged item gets a fresh verdict, and re-labelling never rewrites an earlier night's score.
+- **Eval:** live scores use only each night's own prompt; replay comparisons score base and candidate on the identical (item, night) pairs and fail if the counts differ; replays where no model answered are stored, not dropped; a parse-failure fallback never counts as correct (NIGHTS.md too).
+- **claimBacklog** ignores offline replay rows. `review` re-prompts on a typo, requires an explicit bucket for parse failures, and lists what was skipped. `approve` on a read-only repo records the decision for the stats and says nothing will be posted.

@@ -46,7 +46,9 @@ export async function claimBacklog(db: pg.Pool, nightId: number, repos: string[]
         AND i.last_seen_night IS DISTINCT FROM $1
         AND NOT EXISTS (
           SELECT 1 FROM triage t
-           WHERE t.item_id = i.id AND t.prompt_version = $3 AND t.created_at >= i.collected_at)`,
+           WHERE t.item_id = i.id AND t.prompt_version = $3 AND t.created_at >= i.collected_at
+             -- offline replay rows (a candidate prompt stored under an old night) do not count as triaged
+             AND (t.night_id IS NULL OR t.prompt_version = (SELECT n.prompt_version FROM nights n WHERE n.id = t.night_id)))`,
     [nightId, repos, promptVersion],
   );
   return rowCount ?? 0;

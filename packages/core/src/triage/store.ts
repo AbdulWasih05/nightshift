@@ -48,6 +48,8 @@ export async function saveTriage(
        raw_output = EXCLUDED.raw_output, parse_ok = EXCLUDED.parse_ok, model_path = EXCLUDED.model_path,
        tokens_in = EXCLUDED.tokens_in, tokens_out = EXCLUDED.tokens_out, latency_ms = EXCLUDED.latency_ms,
        created_at = now()
+     -- Never rewrite a row a human has already decided on: the approved draft must stay the one they read.
+     WHERE NOT EXISTS (SELECT 1 FROM approvals a WHERE a.triage_id = triage.id)
      RETURNING id`,
     [
       args.itemId, args.nightId, args.promptVersion, o.bucket, o.confidence, o.reason, JSON.stringify(o.evidence),
@@ -55,5 +57,11 @@ export async function saveTriage(
       run.parseOk, run.modelPath, run.tokensIn, run.tokensOut, run.latencyMs,
     ],
   );
-  return rows[0]!.id;
+  if (rows[0]) return rows[0].id;
+  // Conflict on a row with approvals: keep it untouched and return its id.
+  const existing = await db.query<{ id: number }>(
+    'SELECT id FROM triage WHERE item_id = $1 AND night_id IS NOT DISTINCT FROM $2 AND prompt_version = $3',
+    [args.itemId, args.nightId, args.promptVersion],
+  );
+  return existing.rows[0]!.id;
 }

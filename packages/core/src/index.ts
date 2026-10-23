@@ -11,3 +11,5 @@ export * from './duplicates.ts';
 export * from './nights.ts';
 export * from './digest.ts';
 export * from './telemetry.ts';
+export * from './review.ts';
+export * from './eval.ts';

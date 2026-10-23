@@ -1,0 +1,3 @@
+FROM gemma3:4b
+# Same weights; cap CPU threads so a night leaves a core free (4-core laptop).
+PARAMETER num_thread 3

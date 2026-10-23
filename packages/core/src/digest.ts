@@ -41,8 +41,9 @@ export async function loadDigest(db: pg.Pool, nightId: number): Promise<DigestDa
   const { rows } = await db.query<DigestRow>(
     `SELECT t.id AS triage_id, i.repo, i.number, i.kind, i.title, t.bucket, t.confidence, t.reason, t.draft_reply,
             t.model_path, t.parse_ok, t.latency_ms, t.tokens_in, t.tokens_out
-       FROM triage t JOIN items i ON i.id = t.item_id
-      WHERE t.night_id = $1
+       FROM triage t JOIN items i ON i.id = t.item_id JOIN nights n ON n.id = t.night_id
+      -- Only the prompt the night ran with: offline replays of a candidate prompt share the night id.
+      WHERE t.night_id = $1 AND t.prompt_version = n.prompt_version
       ORDER BY i.repo, i.number`,
     [nightId],
   );
