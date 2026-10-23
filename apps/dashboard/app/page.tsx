@@ -2,6 +2,7 @@ import { auth0, isAllowed } from '@/lib/auth0';
 import { publicStats, type PublicStats } from '@/lib/data';
 import { PipelineFigure } from '@/components/PipelineFigure';
 import { Topbar } from '@/components/Topbar';
+import { Toc } from '@/components/Toc';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,18 +35,7 @@ export default async function CaseStudy() {
     <>
       <Topbar loggedIn={Boolean(session)} allowed={allowed} />
       <div className="doc">
-        <aside className="toc" aria-label="Contents">
-          <p className="toc-title">Contents</p>
-          <ol>
-            {SECTIONS.map(([id, title], i) => (
-              <li key={id}>
-                <a href={`#${id}`}>
-                  {i + 1}. {title}
-                </a>
-              </li>
-            ))}
-          </ol>
-        </aside>
+        <Toc items={SECTIONS.map(([id, title]) => ({ id, title }))} />
 
         <article className="doc-main">
           <p className="kicker">Engineering case study</p>

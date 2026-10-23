@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { auth0, isAllowed } from '@/lib/auth0';
 import { listNights, nightItems, type DashItem } from '@/lib/data';
 import { Topbar } from '@/components/Topbar';
+import { Toc } from '@/components/Toc';
 import { approveAction, editAction, postAction, skipAction } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -39,18 +40,7 @@ export default async function Review({ searchParams }: { searchParams: Promise<{
     <>
       <Topbar loggedIn allowed />
       <div className="doc">
-        <aside className="toc" aria-label="Contents">
-          <p className="toc-title">Contents</p>
-          <ol>
-            {sections.map(([id, title], i) => (
-              <li key={id}>
-                <a href={`#${id}`}>
-                  {i + 1}. {title}
-                </a>
-              </li>
-            ))}
-          </ol>
-        </aside>
+        <Toc items={sections.map(([id, title]) => ({ id: id!, title: title! }))} />
 
         <article className="doc-main">
           <p className="kicker">Triage report</p>

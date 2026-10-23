@@ -59,7 +59,7 @@ body {
   margin: 0;
   background: var(--paper);
   color: var(--ink);
-  font: 17px/1.65 var(--serif);
+  font: 17px/1.7 var(--serif);
   font-kerning: normal;
   text-rendering: optimizeLegibility;
 }
@@ -114,10 +114,33 @@ pre { font: 14px/1.55 var(--mono); }
 @media (min-width: 1024px) {
   .toc { display: block; position: sticky; top: 88px; align-self: start; font-size: 14px; }
 }
+@media (min-width: 1024px) {
+  .toc { max-height: calc(100vh - 120px); overflow-y: auto; overscroll-behavior: contain; padding-right: var(--space-2); }
+}
 .toc-title { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; color: var(--muted); margin: 0 0 var(--space-3); }
-.toc ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
-.toc li a { display: block; padding: 5px 0 5px var(--space-4); color: var(--ink-2); text-decoration: none; line-height: 1.35; }
-.toc li a:hover { color: var(--accent); }
+.toc ol, .toc-mobile ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
+.toc li a, .toc-mobile li a {
+  display: flex; gap: var(--space-3); align-items: baseline;
+  margin-left: -1px; padding: 6px 0 6px var(--space-4);
+  border-left: 2px solid transparent;
+  color: var(--ink-2); text-decoration: none; line-height: 1.35;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.toc-num { font: 500 12px/1.35 var(--mono); color: var(--muted); min-width: 1.2em; }
+.toc li a:hover, .toc-mobile li a:hover { color: var(--accent); }
+.toc li a[aria-current='location'], .toc-mobile li a[aria-current='location'] {
+  color: var(--ink); font-weight: 600; border-left-color: var(--accent);
+  background: linear-gradient(90deg, var(--accent-soft), transparent);
+}
+.toc li a[aria-current='location'] .toc-num { color: var(--accent); }
+.toc-mobile {
+  font-family: var(--sans); font-size: 15px; margin: 0 0 var(--space-6);
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--space-3) var(--space-4);
+}
+.toc-mobile summary { cursor: pointer; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.toc-mobile ol { margin-top: var(--space-3); }
+@media (min-width: 1024px) { .toc-mobile { display: none; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 
 /* title block */
 .kicker { font: 600 12px/1 var(--sans); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin: 0 0 var(--space-4); }

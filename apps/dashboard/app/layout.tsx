@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, JetBrains_Mono, Source_Serif_4 } from 'next/font/google';
+import { Inter, JetBrains_Mono, Literata } from 'next/font/google';
 import './globals.css';
 
-const serif = Source_Serif_4({ subsets: ['latin'], variable: '--font-serif', display: 'swap' });
+// Literata: commissioned by Google for sustained on-screen reading, with an optical-size axis that adapts the
+// letterforms from 17px body text to large headings.
+const serif = Literata({ subsets: ['latin'], variable: '--font-serif', display: 'swap', axes: ['opsz'] });
 const sans = Inter({ subsets: ['latin'], variable: '--font-sans', display: 'swap' });
 const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' });
 
