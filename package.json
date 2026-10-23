@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "nights:update": "tsx scripts/nights-update.ts",
     "stack": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/night-stack.ps1",
-    "night": "pnpm -s stack && pnpm -s nightshift schedule --once-in 2"
+    "night": "pnpm -s stack && pnpm -s nightshift schedule --once-in 2",
+    "stack:down": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack-down.ps1"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

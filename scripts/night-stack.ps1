@@ -1,5 +1,5 @@
 # Starts everything a run needs, detached, so it survives closing the terminal:
-# Docker Desktop + the Postgres container, Ollama, the Temporal dev server (SQLite state in ~/.nightshift)
+# Docker Desktop + the Postgres container (only for a local database), the Temporal dev server (SQLite state in ~/.nightshift)
 # and the Nightshift worker. Safe to re-run: skips anything already running. Logs go to ~/.nightshift/*.log.
 # Restart the worker only BETWEEN runs: a worker restart with changed workflow code breaks a running night.
 # `pnpm night` = this script + a scheduled run 2 minutes later.
@@ -54,16 +54,8 @@ try {
 Write-Host 'postgres ready'
 }
 
-# 2. Ollama (usually starts with Windows)
-if (-not (Test-Port 11434)) {
-  Start-Process (Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama app.exe') -WindowStyle Hidden
-  $deadline = (Get-Date).AddSeconds(60)
-  while (-not (Test-Port 11434)) {
-    if ((Get-Date) -gt $deadline) { throw 'Ollama did not start within 60s' }
-    Start-Sleep -Seconds 2
-  }
-  Write-Host 'ollama started'
-} else { Write-Host 'ollama already running' }
+# 2. Ollama is NOT started here: the worker starts it at the beginning of each run and stops it at the end,
+#    so nothing heavy idles on the laptop between runs.
 
 # 3. Temporal dev server
 $temporal = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\temporal.exe'

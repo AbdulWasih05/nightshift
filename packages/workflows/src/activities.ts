@@ -129,3 +129,58 @@ export async function writeDigest(args: { nightId: number }): Promise<{ path: st
 export async function finishNight(args: { nightId: number; status: Exclude<NightStatus, 'running'>; notes: string }): Promise<void> {
   await finishNightRow(getPool(), args.nightId, args.status, args.notes);
 }
+
+// ---- Ollama lifecycle: started for a run, stopped after it (Wasih's call: nothing heavy idles on the laptop) ----
+
+const OLLAMA = (process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434').replace(/\/$/, '').replace('localhost', '127.0.0.1');
+
+async function ollamaUp(): Promise<boolean> {
+  try {
+    return (await fetch(`${OLLAMA}/api/version`, { signal: AbortSignal.timeout(3000) })).ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Start Ollama if it is not answering (Windows: the tray app, which starts the server). Waits up to 90s. */
+export async function ensureModels(): Promise<string> {
+  if (await ollamaUp()) return 'already running';
+  const { spawn } = await import('node:child_process');
+  const { join } = await import('node:path');
+  if (process.platform === 'win32') {
+    const app = join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Ollama', 'ollama app.exe');
+    spawn(app, [], { detached: true, stdio: 'ignore', env: { ...process.env, OLLAMA_NUM_PARALLEL: '1', OLLAMA_MAX_LOADED_MODELS: '1' } }).unref();
+  } else {
+    spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
+  }
+  for (let i = 0; i < 45; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    Context.current().heartbeat();
+    if (await ollamaUp()) return 'started';
+  }
+  throw ApplicationFailure.retryable('Ollama did not start within 90s');
+}
+
+/**
+ * After a run: unload every model (frees GPU and RAM at once) and, unless NIGHTSHIFT_STOP_OLLAMA_AFTER_RUN=0,
+ * stop Ollama entirely. Best effort: a failure here never fails the night.
+ */
+export async function releaseModels(): Promise<string> {
+  if (!(await ollamaUp())) return 'not running';
+  try {
+    const ps = (await (await fetch(`${OLLAMA}/api/ps`, { signal: AbortSignal.timeout(5000) })).json()) as { models?: { name: string }[] };
+    for (const m of ps.models ?? []) {
+      await fetch(`${OLLAMA}/api/generate`, { method: 'POST', body: JSON.stringify({ model: m.name, keep_alive: 0 }), signal: AbortSignal.timeout(15000) });
+    }
+  } catch {
+    // unloading is an optimisation; stopping below frees everything anyway
+  }
+  if (process.env.NIGHTSHIFT_STOP_OLLAMA_AFTER_RUN === '0') return 'models unloaded';
+  if (process.platform === 'win32') {
+    const { execFile } = await import('node:child_process');
+    for (const image of ['ollama app.exe', 'ollama.exe', 'llama-server.exe']) {
+      await new Promise((r) => execFile('taskkill', ['/IM', image, '/F'], () => r(null)));
+    }
+  }
+  return 'ollama stopped';
+}
