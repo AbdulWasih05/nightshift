@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { renderEval, score, type EvalRow } from '../src/eval.ts';
 
-const r = (model: EvalRow['model'], human: EvalRow['human'], confidence = 0.5, number = 1): EvalRow => ({
-  night_id: 5, repo: 'o/r', number, model, human, confidence, model_reason: 'm', human_reason: 'h', parse_ok: true,
+const r = (model: EvalRow['model'], human: EvalRow['human'], confidence = 0.5, number = 1, parse_ok = true): EvalRow => ({
+  night_id: 5, item_id: number, repo: 'o/r', number, model, human, confidence, model_reason: 'm', human_reason: 'h', parse_ok,
 });
 
 describe('eval scorer on a fixture night', () => {
@@ -26,6 +26,12 @@ describe('eval scorer on a fixture night', () => {
   it('confusion matrix is [human][model]; worst misses are the most confident wrong answers', () => {
     expect(e.confusion.NEEDS_HUMAN.TRIVIAL_SAFE).toBe(1);
     expect(e.worst.map((w) => w.number)).toEqual([3, 5]);
+  });
+
+  it('a parse-failure fallback that happens to match the human label is not counted as correct', () => {
+    const f = score([r('NEEDS_HUMAN', 'NEEDS_HUMAN', 0, 9, false), r('NEEDS_HUMAN', 'NEEDS_HUMAN', 0.7, 10)], 'v1');
+    expect(f.correct).toBe(1);
+    expect(f.parseFailures).toBe(1);
   });
 
   it('renders without inventing numbers for empty input', () => {

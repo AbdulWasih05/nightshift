@@ -9,7 +9,10 @@ import {
   collectRepo,
   createReadClient,
   createWriteClient,
-  loadEvalRows,
+  approvalTarget,
+  loadLiveRows,
+  loadPairedRows,
+  textHash,
   postApproved,
   recordApproval,
   recordLabel,
@@ -275,17 +278,22 @@ full digest: ${file}`);
 
 const KEYS: Record<string, string> = { d: 'DUPLICATE', s: 'SPAM_OR_SLOP', o: 'OUT_OF_SCOPE', t: 'NEEDS_TESTS_OR_INFO', v: 'TRIVIAL_SAFE', h: 'NEEDS_HUMAN' };
 const labeller = () => process.env.NIGHTSHIFT_LABELLER ?? 'maintainer';
+const intArg = (v: string) => {
+  const n = Number.parseInt(v, 10);
+  if (!Number.isInteger(n) || n < 1) throw new InvalidArgumentError(`not a positive integer: ${v}`);
+  return n;
+};
 
 async function latestNight(db: ReturnType<typeof getPool>): Promise<number> {
   const id = (await db.query<{ id: number }>("SELECT max(id) AS id FROM nights WHERE status <> 'running'")).rows[0]?.id;
-  if (!id) throw new Error('no finished night yet');
+  if (!id) throw new Error('no finished night yet; pass --night <id> to label a running night');
   return id;
 }
 
 program
   .command('review')
   .description("Label a night's items as the maintainer (the review step, and the ground truth for eval). Enter = agree with the model.")
-  .option('-n, --night <id>', 'night id (default: latest finished)', (v) => Number.parseInt(v, 10))
+  .option('-n, --night <id>', 'night id (default: latest finished)', intArg)
   .action(async (opts: { night?: number }) => {
     const db = getPool();
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -294,30 +302,44 @@ program
       const items = await unlabelled(db, nightId);
       console.log(`night ${nightId}: ${items.length} unlabelled. Keys: [enter] agree, d DUP, s SPAM, o OUT_OF_SCOPE, t TESTS/INFO, v TRIVIAL, h HUMAN, n skip, q quit\n`);
       let done = 0;
+      const skipped: string[] = [];
       for (const [i, it] of items.entries()) {
         const path = it.kind === 'pr' ? 'pull' : 'issues';
         console.log(`[${i + 1}/${items.length}] ${it.repo}#${it.number} ${it.kind.toUpperCase()}  ${it.title}`);
         console.log(`  https://github.com/${it.repo}/${path}/${it.number}`);
-        console.log(`  model: ${it.bucket}: ${it.reason}`);
+        console.log(`  model: ${it.bucket}: ${it.reason}${it.parse_ok ? '' : '  [PARSE FAILURE: fallback bucket, pick explicitly]'}`);
         if (it.draft_reply) console.log(`  draft: ${it.draft_reply}`);
-        const key = (await rl.question('  your bucket> ')).trim().toLowerCase();
-        if (key === 'q') break;
-        if (key === 'n') continue;
-        const bucket = key === '' ? it.bucket : KEYS[key];
+        let bucket: string | undefined;
+        let quit = false;
+        for (;;) {
+          const key = (await rl.question('  your bucket> ')).trim().toLowerCase();
+          if (key === 'q') quit = true;
+          if (key === 'q' || key === 'n') break;
+          if (key === '' && !it.parse_ok) {
+            console.log('  the model did not answer; choose a bucket key');
+            continue;
+          }
+          bucket = key === '' ? it.bucket : KEYS[key];
+          if (bucket) break;
+          console.log('  unknown key; use enter, d, s, o, t, v, h, n or q');
+        }
+        if (quit) break;
         if (!bucket) {
-          console.log('  unknown key, skipped\n');
+          skipped.push(`${it.repo}#${it.number}`);
           continue;
         }
-        const reason = (await rl.question(`  one-line reason${key === '' ? ' [enter = "agree"]' : ''}> `)).trim() || (key === '' ? 'agree' : '');
-        if (!reason) {
-          console.log('  a reason is required for an override; skipped\n');
-          continue;
+        let reason = '';
+        for (;;) {
+          reason = (await rl.question(`  one-line reason${bucket === it.bucket ? ' [enter = "agree"]' : ''}> `)).trim();
+          if (!reason && bucket === it.bucket) reason = 'agree';
+          if (reason) break;
+          console.log('  a reason is required when you override the model');
         }
-        await recordLabel(db, { repo: it.repo, number: it.number, bucket, reason, labeller: labeller() });
+        await recordLabel(db, { repo: it.repo, number: it.number, nightId, bucket, reason, labeller: labeller() });
         done++;
         console.log('');
       }
-      console.log(`labelled ${done}. Next: pnpm nightshift eval`);
+      console.log(`labelled ${done} of ${items.length}${skipped.length ? `; skipped ${skipped.join(', ')}` : ''}. Next: pnpm nightshift eval --night ${nightId}`);
     } finally {
       rl.close();
       await closePool();
@@ -326,17 +348,19 @@ program
 
 program
   .command('label')
-  .description('Label one item: nightshift label owner/repo#123 NEEDS_HUMAN "touches the scheduler"')
+  .description('Label one item for one night: nightshift label owner/repo#123 NEEDS_HUMAN "touches the scheduler" --night 5')
   .argument('<item>', 'owner/repo#number')
   .argument('<bucket>', 'DUPLICATE | SPAM_OR_SLOP | OUT_OF_SCOPE | NEEDS_TESTS_OR_INFO | TRIVIAL_SAFE | NEEDS_HUMAN')
   .argument('<reason>', 'one line')
-  .action(async (item: string, bucket: string, reason: string) => {
+  .option('-n, --night <id>', 'night id (default: latest finished)', intArg)
+  .action(async (item: string, bucket: string, reason: string, opts: { night?: number }) => {
     const m = /^([^#\s]+\/[^#\s]+)#(\d+)$/.exec(item);
     if (!m) throw new InvalidArgumentError(`expected owner/repo#number, got ${item}`);
     const db = getPool();
     try {
-      await recordLabel(db, { repo: m[1]!, number: Number(m[2]), bucket, reason, labeller: labeller() });
-      console.log(`labelled ${item} ${bucket.toUpperCase()}`);
+      const nightId = opts.night ?? (await latestNight(db));
+      await recordLabel(db, { repo: m[1]!, number: Number(m[2]), nightId, bucket, reason, labeller: labeller() });
+      console.log(`labelled ${item} ${bucket.toUpperCase()} for night ${nightId}`);
     } finally {
       await closePool();
     }
@@ -344,32 +368,36 @@ program
 
 program
   .command('eval')
-  .description('Score model buckets against human labels; write docs/eval/<date>-<prompt>.md. --replay re-runs a candidate prompt on the stored inputs first.')
-  .option('-p, --prompt <version>', 'prompt version to score (default: pinned)')
-  .option('--replay <candidate>', 'replay this candidate prompt over every labelled item (GPU, ~1 min/item), then score both')
+  .description("Score each night's own triage against human labels -> docs/eval/. --replay <v> compares a candidate prompt offline on the same items.")
+  .option('-p, --prompt <version>', 'base prompt for --replay (default: pinned)')
+  .option('--replay <candidate>', 'replay this candidate prompt over every labelled item (GPU, ~1-2 min/item), then score both on the same items')
   .option('--night <ids...>', 'limit to these nights')
   .action(async (opts: { prompt?: string; replay?: string; night?: string[] }) => {
     const db = getPool();
     try {
-      const nights = opts.night?.map((n) => Number.parseInt(n, 10));
-      const base = opts.prompt ?? loadConfig().promptVersion;
-      const versions = [base];
-      if (opts.replay) {
-        const n = await replayCandidate(db, {
-          base,
-          candidate: opts.replay,
-          nights,
-          onItem: (done, of) => process.stdout.write(`\rreplaying ${opts.replay}: ${done}/${of}`),
-        });
-        console.log(`\nreplayed ${n} items with ${opts.replay}`);
-        versions.push(opts.replay);
-      }
+      const nights = opts.night?.map(intArg);
       const date = new Date().toISOString().slice(0, 10);
-      for (const v of versions) {
-        const e = score(await loadEvalRows(db, { promptVersion: v, nights }), v);
-        const file = await writeEval(e, resolve(process.cwd(), 'docs', 'eval'), date);
-        console.log(`${v}: ${e.n ? `${e.correct}/${e.n} correct (${Math.round((100 * e.correct) / e.n)}%)` : 'no labelled items'}; parse failures ${e.parseFailures} -> ${file}`);
+      const dir = resolve(process.cwd(), 'docs', 'eval');
+      const report = async (e: ReturnType<typeof score>) => {
+        const file = await writeEval(e, dir, date);
+        console.log(`${e.promptVersion} (${e.mode}): ${e.n ? `${e.correct}/${e.n} correct (${Math.round((100 * e.correct) / e.n)}%)` : 'no labelled items'}; parse failures ${e.parseFailures} -> ${file}`);
+      };
+      if (!opts.replay) {
+        await report(score(await loadLiveRows(db, { nights }), 'live', 'live'));
+        return;
       }
+      const base = opts.prompt ?? loadConfig().promptVersion;
+      const r = await replayCandidate(db, {
+        base,
+        candidate: opts.replay,
+        nights,
+        onItem: (done, of) => process.stdout.write(`\rreplaying ${opts.replay}: ${done}/${of}`),
+      });
+      console.log(`\nreplayed ${r.replayed} items with ${opts.replay}${r.noModel ? ` (${r.noModel} with no model answer, stored as NEEDS_HUMAN)` : ''}`);
+      const paired = await loadPairedRows(db, { base, candidate: opts.replay, nights });
+      console.log(`comparing on the same ${paired.base.length} labelled items`);
+      await report(score(paired.base, base, 'replay'));
+      await report(score(paired.candidate, opts.replay, 'replay'));
     } finally {
       await closePool();
     }
@@ -377,31 +405,54 @@ program
 
 program
   .command('approve')
-  .description('Approve a drafted reply by its [id] in the digest. Nothing is posted until `nightshift post <id>`.')
-  .argument('<id>', 'triage id', (v) => Number.parseInt(v, 10))
+  .description('Approve a drafted reply by its [id] in the digest: shows the full text and asks y/N. Nothing is posted until `nightshift post <id>`.')
+  .argument('<id>', 'triage id', intArg)
   .option('-e, --edit <text>', 'approve your edited text instead of the draft')
   .option('-s, --skip', 'reject the draft (revokes an earlier approval)')
-  .action(async (id: number, opts: { edit?: string; skip?: boolean }) => {
+  .option('--hash <h>', 'non-interactive approve: the hash printed next to the draft you read')
+  .action(async (id: number, opts: { edit?: string; skip?: boolean; hash?: string }) => {
     const db = getPool();
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
-      const action = opts.skip ? 'skip' : opts.edit ? 'edit' : 'approve';
-      await recordApproval(db, { triageId: id, action, finalText: opts.edit ?? null, actor: labeller() });
-      console.log(`${action} recorded for ${id}${action === 'skip' ? '' : `. Post it with: nightshift post ${id}`}`);
+      const t = await approvalTarget(db, id);
+      const note = t.writable ? '' : ` (${t.repo} is read-only: the decision is recorded for the stats, nothing is ever posted)`;
+      if (opts.skip) {
+        await recordApproval(db, { triageId: id, action: 'skip', actor: labeller() });
+        console.log(`skip recorded for ${id}${note}`);
+        return;
+      }
+      if (opts.edit) {
+        await recordApproval(db, { triageId: id, action: 'edit', finalText: opts.edit, actor: labeller() });
+        console.log(`edit recorded for ${id}${note}${t.writable ? `. Post it with: nightshift post ${id}` : ''}`);
+        return;
+      }
+      if (!t.draft_reply) throw new Error(`triage ${id} has no draft`);
+      const hash = textHash(t.draft_reply);
+      if (!opts.hash) {
+        console.log(`${t.repo}#${t.number} draft (hash ${hash}):\n\n${t.draft_reply}\n`);
+        const ok = (await rl.question('Approve exactly this text? [y/N] ')).trim().toLowerCase();
+        if (ok !== 'y' && ok !== 'yes') {
+          console.log('not approved');
+          return;
+        }
+      }
+      await recordApproval(db, { triageId: id, action: 'approve', shownHash: opts.hash ?? hash, actor: labeller() });
+      console.log(`approved ${id}${note}${t.writable ? `. Post it with: nightshift post ${id}` : ''}`);
     } finally {
+      rl.close();
       await closePool();
     }
   });
 
 program
   .command('post')
-  .description('Post an approved reply as a GitHub comment. Own repo only (hard allowlist); refuses without an approval.')
-  .argument('<id>', 'triage id', (v) => Number.parseInt(v, 10))
+  .description('Post an approved reply as a GitHub comment. Own repo only (hard allowlist); refuses without an approval; never twice.')
+  .argument('<id>', 'triage id', intArg)
   .action(async (id: number) => {
     const db = getPool();
     try {
-      const { rows } = await db.query<{ repo: string }>('SELECT i.repo FROM triage t JOIN items i ON i.id = t.item_id WHERE t.id = $1', [id]);
-      if (!rows[0]) throw new Error(`triage ${id} not found`);
-      const url = await postApproved(db, createWriteClient(rows[0].repo), { triageId: id, actor: labeller() });
+      const t = await approvalTarget(db, id);
+      const url = await postApproved(db, createWriteClient(t.repo), { triageId: id, actor: labeller() });
       console.log(`posted: ${url}`);
     } finally {
       await closePool();

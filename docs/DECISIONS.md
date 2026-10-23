@@ -99,3 +99,11 @@ Not fixed, by choice:
   - Postgres is capped at 1 CPU / 1 GB (`shared_buffers=128MB`).
   - Heavy builds and tests are kept away from night runs.
 - **`.claude/` removed from the repo** (local Claude Code config, not project code) and gitignored.
+
+### Builder-review of unit 6: review loop + approval gate (2026-10-23)
+Fixed:
+- **Blocker: posted text could differ from what the human read.** The digest shows 90 chars of a draft, `approve` saved the full DB text unseen, and a re-upsert could rewrite the draft after approval. Now `approve` prints the full draft and asks y/N (or takes `--hash` of the text shown); the approval records only text whose hash matches; `saveTriage` never rewrites a row that has an approval.
+- **Blocker: the same reply could be posted twice** (concurrent posts, comment created then DB insert failed, Octokit retrying a 5xx POST). The `post` row is now claimed before the network call, under a unique index of one post per GitHub item (not per triage row, so a later night's draft for the same issue cannot post again). Writes go out with `retries: 0`; a failed call leaves the claim for a human to check on GitHub. Closed items are refused.
+- **Labels are per (item, night)** (migration 007). A re-triaged item gets a fresh verdict, and re-labelling never rewrites an earlier night's score.
+- **Eval:** live scores use only each night's own prompt; replay comparisons score base and candidate on the identical (item, night) pairs and fail if the counts differ; replays where no model answered are stored, not dropped; a parse-failure fallback never counts as correct (NIGHTS.md too).
+- **claimBacklog** ignores offline replay rows. `review` re-prompts on a typo, requires an explicit bucket for parse failures, and lists what was skipped. `approve` on a read-only repo records the decision for the stats and says nothing will be posted.
