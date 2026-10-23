@@ -89,3 +89,13 @@ Not fixed, by choice:
 - **Kept, time-boxed:** dashboard on Render + Auth0 (Token Vault 45 min, otherwise stubbed and logged). TabPFN ~2h, otherwise cut and logged.
 - **Nights:** night 5 (scheduled one-off at 23:01 Thu) and night 6 (Fri). An optional Saturday afternoon run is listed as manual. The post reports exactly the nights in NIGHTS.md.
 - **Reversed the same evening (Wasih):** nothing is cut. ElevenLabs, GitHub Action, Entire, Tinker (its Friday-night 250-label go/no-go rule from the brief still applies) and the changelog draft are back in scope, built after core. .tech stays deferred pending last week's winner. Render deploys from a "Deploy to Render" button (render.yaml blueprint) in the README.
+
+## 2026-10-23
+
+- **Laptop rebooted at 23:42 IST, ~40 min into night 5**, and nothing restarted: Docker, the Temporal dev server, the worker and Ollama were all down until 12:25 the next day. The 02:00 run was missed: its 6h catch-up window had passed by the time Temporal was back. Night 5 resumed from Temporal's SQLite state when the stack was restarted (9 → 12 items within minutes); no work was lost and nothing was triaged twice.
+- **CPU budget on a 4-core laptop (Wasih's call):** the night must not take the whole machine.
+  - Gemma runs from Modelfile copies of the same weights with `num_thread 3` (`nightshift-gemma3-4b`, `nightshift-gemma3-1b`; `TRIAGE_MODEL_TAG`). `model_path` still records `gemma3:4b`.
+  - `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=1`.
+  - Postgres is capped at 1 CPU / 1 GB (`shared_buffers=128MB`).
+  - Heavy builds and tests are kept away from night runs.
+- **`.claude/` removed from the repo** (local Claude Code config, not project code) and gitignored.

@@ -65,7 +65,11 @@ export async function preflight(root = process.cwd()): Promise<boolean> {
       const host = (process.env.OLLAMA_HOST ?? 'http://localhost:11434').replace(/\/$/, '');
       const res = await fetch(`${host}/api/tags`, { signal: AbortSignal.timeout(10_000) });
       const names = ((await res.json()) as { models: { name: string }[] }).models.map((m) => m.name.replace(/:latest$/, ''));
-      const need = [process.env.TRIAGE_MODEL ?? 'gemma3:4b', process.env.TRIAGE_FALLBACK_MODEL ?? 'gemma3:1b', process.env.EMBED_MODEL ?? 'nomic-embed-text'];
+      const need = [
+        process.env.TRIAGE_MODEL_TAG || process.env.TRIAGE_MODEL || 'gemma3:4b',
+        process.env.TRIAGE_FALLBACK_MODEL_TAG || process.env.TRIAGE_FALLBACK_MODEL || 'gemma3:1b',
+        process.env.EMBED_MODEL ?? 'nomic-embed-text',
+      ];
       const missing = need.filter((n) => !names.includes(n.replace(/:latest$/, '')));
       if (missing.length) throw new Error(`missing: ${missing.join(', ')} (ollama pull ...)`);
       return need.join(', ');
