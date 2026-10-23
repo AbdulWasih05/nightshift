@@ -2,25 +2,38 @@
    leading, numbered sections, captioned figures and tables, sticky margin TOC on wide screens. */
 
 :root {
-  --paper: #fbfaf6;
-  --sheet: #ffffff;
-  --ink: #1c1b19;
-  --ink-2: #4a4843;
-  --muted: #76736c;
-  --rule: #e4e0d6;
-  --rule-strong: #cdc7b9;
-  --accent: #2f4bd1;
-  --accent-soft: #eef1fd;
-  --human: #b4470f;
-  --human-soft: #fdf1ea;
-  --draft: #2f4bd1;
-  --safe: #1f7a43;
-  --safe-soft: #ebf6ef;
-  --warn-soft: #fff8e6;
-  --code-bg: #f3f1ea;
+  /* GitHub Primer (light): the palette maintainers already read PRs and docs in. */
+  --paper: #ffffff;          /* canvas.default */
+  --sheet: #f6f8fa;          /* canvas.subtle */
+  --ink: #1f2328;            /* fg.default */
+  --ink-2: #31363c;
+  --muted: #59636e;          /* fg.muted */
+  --subtle: #818b98;         /* fg.subtle */
+  --rule: #d8dee4;           /* border.muted */
+  --rule-strong: #d0d7de;    /* border.default */
+  --accent: #0969da;         /* accent.fg */
+  --accent-soft: #ddf4ff;    /* accent.subtle */
+  --human: #bc4c00;          /* severe.fg */
+  --human-soft: #fff1e5;
+  --draft: #0969da;
+  --safe: #1a7f37;           /* success.fg */
+  --safe-soft: #dafbe1;
+  --warn: #9a6700;           /* attention.fg */
+  --warn-soft: #fff8c5;      /* attention.subtle */
+  --code-bg: #eff1f3;        /* neutral.muted */
+  /* Excalidraw palette for the sketch figures */
+  --fig-ink: #1e1e1e;
+  --fig-paper: #ffffff;
+  --fig-blue: #a5d8ff;
+  --fig-blue-ink: #1971c2;
+  --fig-orange: #ffc078;
+  --fig-orange-ink: #e8590c;
+  --fig-green: #b2f2bb;
+  --fig-green-ink: #2f9e44;
   --serif: var(--font-serif), 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
-  --sans: var(--font-sans), system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --mono: var(--font-mono), ui-monospace, 'Cascadia Code', Consolas, monospace;
+  --sans: var(--font-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --mono: var(--font-mono), ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --hand: var(--font-hand), 'Comic Sans MS', cursive;
   --measure: 68ch;
   --space-1: 4px;
   --space-2: 8px;
@@ -30,26 +43,37 @@
   --space-6: 32px;
   --space-7: 48px;
   --space-8: 72px;
-  --radius: 10px;
+  --radius: 6px;             /* Primer's border radius */
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #121318;
-    --sheet: #191b22;
-    --ink: #ecebe6;
-    --ink-2: #c4c2bb;
-    --muted: #96948d;
-    --rule: #2b2e38;
-    --rule-strong: #3a3e4b;
-    --accent: #9cacff;
-    --accent-soft: #1f2540;
-    --human: #f59a62;
-    --human-soft: #2c1f17;
-    --draft: #9cacff;
-    --safe: #6fd39a;
-    --safe-soft: #16261d;
-    --warn-soft: #29240f;
-    --code-bg: #20232c;
+    /* GitHub Primer (dark default) */
+    --paper: #0d1117;
+    --sheet: #151b23;
+    --ink: #e6edf3;
+    --ink-2: #c9d1d9;
+    --muted: #8d96a0;
+    --subtle: #656d76;
+    --rule: #21262d;
+    --rule-strong: #30363d;
+    --accent: #4493f8;
+    --accent-soft: #121d2f;
+    --human: #db6d28;
+    --human-soft: #221710;
+    --draft: #4493f8;
+    --safe: #3fb950;
+    --safe-soft: #12261e;
+    --warn: #d29922;
+    --warn-soft: #272115;
+    --code-bg: #262c36;
+    --fig-ink: #d6d6d6;
+    --fig-paper: #0d1117;
+    --fig-blue: #1c5ea0;
+    --fig-blue-ink: #74c0fc;
+    --fig-orange: #a14a12;
+    --fig-orange-ink: #ffa94d;
+    --fig-green: #237a3a;
+    --fig-green-ink: #69db7c;
   }
 }
 
@@ -97,7 +121,6 @@ pre { font: 14px/1.55 var(--mono); }
 .btn:hover { border-color: var(--ink-2); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-@media (prefers-color-scheme: dark) { .btn.primary { color: #10131f; } }
 .btn.quiet { border-color: transparent; background: transparent; }
 
 /* ---------- document layout ---------- */
@@ -119,24 +142,23 @@ pre { font: 14px/1.55 var(--mono); }
 }
 .toc-title { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; color: var(--muted); margin: 0 0 var(--space-3); }
 .toc ol, .toc-mobile ol { list-style: none; margin: 0; padding: 0; position: relative; }
-/* The rail: a hairline, filled with accent up to the section being read (--progress set by Toc.tsx). */
-.toc ol::before, .toc ol::after { content: ''; position: absolute; left: 0; top: 0; width: 1px; }
-.toc ol::before { bottom: 0; background: var(--rule); }
-.toc ol::after { height: var(--progress, 0%); background: var(--accent); transition: height 0.2s ease-out; }
+.toc ol { border-left: 1px solid var(--rule-strong); }
+/* One bar that slides to the active entry (positioned by Toc.tsx). */
+.toc-bar {
+  position: absolute; left: -1px; top: 0; width: 2px; border-radius: 2px; background: var(--accent);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), height 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) { .toc-bar { transition: none; } }
 .toc li a, .toc-mobile li a {
-  position: relative; display: grid; grid-template-columns: 22px 1fr; align-items: baseline;
-  padding: 7px 0 7px 18px; color: var(--muted); text-decoration: none; line-height: 1.4;
-  transition: color 0.15s;
+  display: grid; grid-template-columns: 22px 1fr; align-items: baseline;
+  padding: 6px 0 6px 16px; color: var(--subtle); text-decoration: none; line-height: 1.4;
+  transition: color 0.2s;
 }
-.toc-num { font: 500 12px/1.4 var(--mono); color: var(--muted); }
-.toc li a:hover, .toc-mobile li a:hover { color: var(--ink); }
-.toc li a[aria-current='location'], .toc-mobile li a[aria-current='location'] { color: var(--ink); font-weight: 600; }
-.toc li a[aria-current='location'] .toc-num, .toc-mobile li a[aria-current='location'] .toc-num { color: var(--accent); }
-/* Marker: a small dot sitting on the rail next to the active entry. */
-.toc li a[aria-current='location']::before {
-  content: ''; position: absolute; left: -3px; top: calc(7px + 0.7em - 3.5px); width: 7px; height: 7px; border-radius: 50%;
-  background: var(--accent); box-shadow: 0 0 0 3px var(--paper);
-}
+.toc-num { font: 500 12px/1.4 var(--mono); color: var(--subtle); opacity: 0.8; }
+.toc li a:hover, .toc-mobile li a:hover { color: var(--ink-2); }
+.toc li a[aria-current='location'], .toc-mobile li a[aria-current='location'] { color: var(--ink); font-weight: 500; }
+.toc li a[aria-current='location'] .toc-num, .toc-mobile li a[aria-current='location'] .toc-num { color: var(--accent); opacity: 1; }
 .toc-mobile {
   font-family: var(--sans); font-size: 15px; margin: 0 0 var(--space-6);
   background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--space-3) var(--space-4);
@@ -188,6 +210,15 @@ figcaption { font: 14px/1.5 var(--sans); color: var(--muted); margin-top: var(--
 figure.figure figcaption::before { content: 'Figure ' counter(figure) '. '; font-weight: 600; color: var(--ink-2); }
 figure.table figcaption::before { content: 'Table ' counter(table) '. '; font-weight: 600; color: var(--ink-2); }
 .diagram { width: 100%; height: auto; display: block; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); }
+.diagram.sketch { background: var(--fig-paper); padding: 8px; }
+.fig-title, .fig-sub {
+  fill: var(--fig-ink);
+  /* Halo in the paper colour so lettering stays readable over hachure fills, as on an Excalidraw canvas. */
+  paint-order: stroke; stroke: var(--fig-paper); stroke-width: 5px; stroke-linejoin: round;
+}
+.fig-title { font: 21px var(--hand); }
+.fig-sub { font: 13.5px var(--hand); fill-opacity: 0.78; }
+.fig-label { font: 15px var(--hand); fill: var(--fig-ink); opacity: 0.6; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--sheet); }
 table { width: 100%; border-collapse: collapse; font: 15px/1.45 var(--sans); }
 th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
@@ -202,25 +233,32 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stat-label { font-size: 13px; color: var(--muted); margin-top: var(--space-1); line-height: 1.35; }
 .na { color: var(--muted); font-weight: 500; }
 
-/* callouts */
-.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: var(--space-4) var(--space-5); border-radius: 0 var(--radius) var(--radius) 0; margin: var(--space-5) 0; max-width: var(--measure); }
-.note.warn { border-left-color: var(--human); background: var(--warn-soft); }
-.note p:last-child { margin-bottom: 0; }
-.note strong:first-child { font-family: var(--sans); font-size: 14px; letter-spacing: 0.02em; }
+/* GitHub markdown alerts ( > [!NOTE] / [!WARNING] ) */
+.alert { border-left: 4px solid var(--accent); padding: var(--space-2) var(--space-4); margin: var(--space-5) 0; max-width: var(--measure); font-family: var(--sans); font-size: 15px; line-height: 1.55; color: var(--ink); }
+.alert p { margin: 0 0 var(--space-2); }
+.alert p:last-child { margin-bottom: 0; }
+.alert-title { display: flex; align-items: center; gap: var(--space-2); font-weight: 500; color: var(--accent); }
+.alert-warning { border-left-color: var(--warn); }
+.alert-warning .alert-title { color: var(--warn); }
 
-/* fences list */
-.fences { list-style: none; padding: 0; counter-reset: fence; display: grid; gap: var(--space-3); }
-.fences li { counter-increment: fence; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--space-4) var(--space-5) var(--space-4) 56px; position: relative; margin: 0; }
-.fences li::before { content: counter(fence); position: absolute; left: 18px; top: 16px; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font: 600 13px/24px var(--sans); text-align: center; }
-@media (prefers-color-scheme: dark) { .fences li::before { color: #10131f; } }
-.fences strong { display: block; font-family: var(--sans); font-size: 15px; margin-bottom: 2px; }
+/* GitHub Box list: one bordered container, divided rows */
+.box-list { list-style: none; padding: 0; margin: var(--space-5) 0; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--paper); }
+.box-row { display: grid; grid-template-columns: 28px 1fr; gap: var(--space-3); padding: var(--space-4); border-top: 1px solid var(--rule-strong); margin: 0; font-family: var(--sans); }
+.box-row:first-child { border-top: 0; }
+.step { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--rule-strong); display: grid; place-items: center; font: 600 12px/1 var(--mono); color: var(--muted); background: var(--sheet); margin-top: 1px; }
+.box-row-title { font-size: 15px; font-weight: 600; color: var(--ink); margin: 0 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.box-row-text { font-size: 15px; line-height: 1.55; color: var(--muted); margin: 0; max-width: var(--measure); }
+.label-pill { font: 500 12px/18px var(--sans); color: var(--muted); border: 1px solid var(--rule-strong); border-radius: 2em; padding: 0 7px; }
 
-/* incident log */
-.incidents { border-left: 1px solid var(--rule-strong); margin-left: 6px; padding-left: var(--space-5); }
-.incident { position: relative; margin: 0 0 var(--space-6); max-width: var(--measure); }
-.incident::before { content: ''; position: absolute; left: calc(-1 * var(--space-5) - 5px); top: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--human); }
-.incident h3 { margin: 0 0 var(--space-2); font-size: 18px; }
-.incident .when { font: 13px/1.4 var(--mono); color: var(--muted); margin: 0 0 var(--space-2); }
+/* Primer Timeline */
+.timeline { list-style: none; padding: 0; margin: var(--space-5) 0; position: relative; }
+.timeline::before { content: ''; position: absolute; left: 15px; top: 4px; bottom: 4px; width: 2px; background: var(--rule-strong); }
+.timeline-item { position: relative; display: grid; grid-template-columns: 32px 1fr; gap: var(--space-4); margin: 0 0 var(--space-5); }
+.timeline-badge { position: relative; z-index: 1; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--sheet); border: 2px solid var(--paper); box-shadow: 0 0 0 1px var(--rule-strong); color: var(--warn); }
+.timeline-body { padding-top: 4px; min-width: 0; }
+.timeline-body h3 { font: 600 16px/1.4 var(--sans); margin: 0 0 2px; color: var(--ink); }
+.timeline-body .when { font: 13px/1.4 var(--sans); color: var(--muted); margin: 0 0 var(--space-2); }
+.timeline-body p:last-child { margin: 0; max-width: var(--measure); color: var(--ink-2); }
 
 /* ---------- review report ---------- */
 .flash { font-family: var(--sans); font-size: 15px; background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--accent); padding: var(--space-3) var(--space-4); border-radius: 0 var(--radius) var(--radius) 0; margin: 0 0 var(--space-6); overflow-wrap: anywhere; }
@@ -249,8 +287,8 @@ textarea { width: 100%; min-height: 120px; resize: vertical; }
 .facts li { font: 13px/1 var(--sans); color: var(--ink-2); background: var(--paper); border: 1px solid var(--rule); border-radius: 999px; padding: 6px 10px; margin: 0; }
 .facts li.fact-good { color: var(--safe); border-color: color-mix(in srgb, var(--safe) 35%, var(--rule)); }
 .facts li.fact-bad { color: var(--human); border-color: color-mix(in srgb, var(--human) 35%, var(--rule)); }
-.overruled { font: 14px/1.5 var(--sans); color: var(--ink-2); background: var(--warn-soft); border-radius: 8px; padding: var(--space-3) var(--space-4); margin: 0 0 var(--space-3); max-width: var(--measure); }
-.overruled span { display: block; font: 600 11px/1.4 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--human); margin-bottom: 2px; }
+.overruled { font: 14px/1.5 var(--sans); color: var(--ink); border-left: 4px solid var(--warn); padding: 2px var(--space-4); margin: 0 0 var(--space-4); max-width: var(--measure); }
+.overruled span { display: block; font-weight: 500; color: var(--warn); margin-bottom: 2px; }
 .label { font: 600 11px/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 var(--space-2); }
 .reasoning { margin: 0 0 var(--space-3); }
 .reasoning .clamp {
@@ -278,3 +316,9 @@ details.edit form { margin-top: var(--space-3); display: grid; gap: var(--space-
 .center-page p { color: var(--ink-2); margin: 0 0 var(--space-4); }
 
 footer.doc-foot { border-top: 1px solid var(--rule); margin-top: var(--space-7); padding-top: var(--space-5); font: 13px/1.6 var(--sans); color: var(--muted); }
+
+/* Component paragraphs: override the section's prose spacing (.section p) inside components. */
+.section .box-list p, .section .alert p, .section .timeline p { margin: 0; }
+.section .box-row-title { margin-bottom: 4px; }
+.section .alert p + p { margin-top: var(--space-2); }
+.section .timeline-body .when { margin-bottom: var(--space-2); }

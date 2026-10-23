@@ -138,26 +138,26 @@ export default async function CaseStudy() {
               The agent never acts on its own. The only write in the codebase is the Post button, and three independent fences stand in front
               of it. Any one of them alone blocks a write to a repository the maintainer does not own.
             </p>
-            <ol className="fences">
-              <li>
-                <strong>GitHub App scope</strong>
+            <ol className="box-list" aria-label="Write fences">
+              <Fence n={1} title="GitHub App scope" tag="enforced by GitHub">
                 The GitHub App used for posting is installed on one repository. GitHub itself refuses writes anywhere else.
-              </li>
-              <li>
-                <strong>Hard allowlist in code</strong>
+              </Fence>
+              <Fence n={2} title="Hard allowlist in code" tag="enforced by Nightshift">
                 A frozen constant, not a setting. The write client checks the fully resolved request URL; the read-only collector refuses every
                 non-GET request. Partner repositories are read-only, always.
-              </li>
-              <li>
-                <strong>Approval of the exact text</strong>
-                An approval is bound to a hash of the draft the maintainer read. Posting needs that approval, an open item, and no earlier post
-                to the same item; a database constraint claims the post before the network call, so it can never happen twice.
-              </li>
+              </Fence>
+              <Fence n={3} title="Approval of the exact text" tag="enforced by the database">
+                An approval is bound to a hash of the draft the maintainer read. Posting needs that approval, an open item, and no earlier post to
+                the same item; a database constraint claims the post before the network call, so it can never happen twice.
+              </Fence>
             </ol>
-            <div className="note">
+            <div className="alert alert-note" role="note">
+              <p className="alert-title">
+                <InfoIcon /> Note
+              </p>
               <p>
-                <strong>No GitHub token in the hosted app.</strong> The dashboard gets a short-lived GitHub token from Auth0 Token Vault at
-                the moment the maintainer presses Post, and discards it afterwards.
+                <strong>No GitHub token in the hosted app.</strong> The dashboard gets a short-lived GitHub token from Auth0 Token Vault at the
+                moment the maintainer presses Post, and discards it afterwards.
               </p>
             </div>
             <p>
@@ -296,7 +296,7 @@ export default async function CaseStudy() {
           <section className="section" id="failures">
             <h2>Failures and what changed</h2>
             <p>Each of these happened during the build and is logged with its fix in the repository&apos;s decision log.</p>
-            <div className="incidents">
+            <ol className="timeline">
               <Incident when="Oct 21 · code review" title="A way past the write allowlist">
                 The first write guard checked the owner and repository parameters, not the URL actually sent. A request written as a literal URL
                 to a partner repository passed. The guard now checks the resolved URL, and the bypass is a regression test.
@@ -321,7 +321,7 @@ export default async function CaseStudy() {
                 Forty minutes into a night the machine restarted and nothing came back up until the next day. Temporal&apos;s saved state let
                 the night resume where it stopped.
               </Incident>
-            </div>
+            </ol>
           </section>
 
           <section className="section" id="reproduce">
@@ -360,10 +360,47 @@ function Stat({ value, label }: { value: string | null; label: string }) {
 
 function Incident({ when, title, children }: { when: string; title: string; children: React.ReactNode }) {
   return (
-    <div className="incident">
-      <p className="when">{when}</p>
-      <h3>{title}</h3>
-      <p>{children}</p>
-    </div>
+    <li className="timeline-item">
+      <span className="timeline-badge" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="14" height="14">
+          <path
+            fill="currentColor"
+            d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+          />
+        </svg>
+      </span>
+      <div className="timeline-body">
+        <h3>{title}</h3>
+        <p className="when">{when}</p>
+        <p>{children}</p>
+      </div>
+    </li>
+  );
+}
+
+function Fence({ n, title, tag, children }: { n: number; title: string; tag: string; children: React.ReactNode }) {
+  return (
+    <li className="box-row">
+      <span className="step" aria-hidden="true">
+        {n}
+      </span>
+      <div>
+        <p className="box-row-title">
+          {title} <span className="label-pill">{tag}</span>
+        </p>
+        <p className="box-row-text">{children}</p>
+      </div>
+    </li>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"
+      />
+    </svg>
   );
 }
