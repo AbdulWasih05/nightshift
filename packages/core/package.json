@@ -4,7 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./review": "./src/review.ts",
+    "./github": "./src/github/client.ts",
+    "./db": "./src/db.ts",
+    "./allowlist": "./src/allowlist.ts",
+    "./types": "./src/types.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.75",
